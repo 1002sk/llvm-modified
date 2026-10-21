@@ -51,7 +51,7 @@ long add(long a, long b) { return a + b; }
 // CHECK-SAME: \"src_ptr\":{\"expr\":\"o\",\"var\":\"o\",\"type\":\"struct Outer *\",\"derived_from\":[]}
 // CHECK-SAME: \"path\":[{\"op\":\"field\",\"name\":\"inner\",\"record\":\"struct Outer\",\"type\":\"struct Inner\",\"offset_in_parent\":4,\"offset\":4,\"size\":20},{\"op\":\"field\",\"name\":\"arr\",\"record\":\"struct Inner\",\"type\":\"int[4]\",\"offset_in_parent\":4,\"offset\":8,\"size\":16,\"length\":4,\"stride\":4},{\"op\":\"index\",\"index\":2,\"index_reg\":null,\"type\":\"int\",\"offset_in_parent\":8,\"offset\":16,\"size\":4}]
 // CHECK-SAME: \"path_str\":\"o->inner.arr[2]\",\"ptr_offset\":{\"const\":16,\"var\":[]},\"byte_offset_in_field\":0,\"result_type\":\"int *\"
-// CHECK-SAME: \"confidence\":\"derived\",\"provenance\":[\"machine-operand\",\"debuginfo-variable\",\"debuginfo-type\"]
+// CHECK-SAME: \"confidence\":\"derived\",\"provenance\":[\"machine-operand\",\"ir-annotation\",\"debuginfo-type\"]
 
 // p + i: a variable subscript of the pointer itself.
 // CHECK-SAME: \"function\":\"pidx\",\"kind\":\"derive\"
@@ -82,7 +82,7 @@ long add(long a, long b) { return a + b; }
 // PIE-SAME:    \"base\":{\"kind\":\"global\",\"name\":\"arr\",
 // PIE-SAME:    \"src_ptr\":{\"expr\":\"arr\",\"var\":null,\"type\":\"int[10] *\",\"derived_from\":[5]}
 // PIE-SAME:    \"path\":[{\"op\":\"index\",\"index\":null,\"index_reg\":\"rdi\",\"type\":\"int\",\"offset_in_parent\":null,\"offset\":null,\"size\":4}],\"path_str\":\"arr[?]\"
-// PIE-SAME:    \"provenance\":[\"machine-operand\",\"derived-from-record\",\"debuginfo-type\"]
+// PIE-SAME:    \"provenance\":[\"machine-operand\",\"derived-from-record\",\"ir-annotation\",\"debuginfo-type\"]
 
 // Members of anonymous structs and unions are named directly.
 // CHECK-SAME: \"function\":\"anon\",\"kind\":\"addr\"
@@ -117,6 +117,6 @@ long add(long a, long b) { return a + b; }
 // CHECK-SAME: \"base\":{\"kind\":\"param\",\"name\":\"n\",\"type\":\"int\"
 // CHECK-SAME: \"path_str\":\"n\"
 
-// A LEA on integer variables.
+// A LEA on integers.
 // CHECK-SAME: \"function\":\"add\",\"kind\":\"not_pointer\"
-// CHECK-SAME: \"reason\":\"base register holds integer variable a\"}\n"
+// CHECK-SAME: \"confidence\":\"exact\",\"reason\":\"integer arithmetic in the IR\"}\n"

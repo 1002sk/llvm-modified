@@ -18,6 +18,7 @@ using namespace llvm;
 
 /// initializeCodeGen - Initialize all passes linked into the CodeGen library.
 void llvm::initializeCodeGen(PassRegistry &Registry) {
+  initializeAddrMapAnnotateLegacyPass(Registry);
   initializeAssignmentTrackingAnalysisPass(Registry);
   initializeAtomicExpandLegacyPass(Registry);
   initializeBasicBlockMatchingAndInferencePass(Registry);

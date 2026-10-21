@@ -322,7 +322,8 @@ void MachineInstr::setExtraInfo(MachineFunction &MF,
                                 MCSymbol *PreInstrSymbol,
                                 MCSymbol *PostInstrSymbol,
                                 MDNode *HeapAllocMarker, MDNode *PCSections,
-                                uint32_t CFIType, MDNode *MMRAs, Value *DS) {
+                                uint32_t CFIType, MDNode *MMRAs, Value *DS,
+                                MDNode *AddrMap) {
   bool HasPreInstrSymbol = PreInstrSymbol != nullptr;
   bool HasPostInstrSymbol = PostInstrSymbol != nullptr;
   bool HasHeapAllocMarker = HeapAllocMarker != nullptr;
@@ -330,9 +331,10 @@ void MachineInstr::setExtraInfo(MachineFunction &MF,
   bool HasCFIType = CFIType != 0;
   bool HasMMRAs = MMRAs != nullptr;
   bool HasDS = DS != nullptr;
+  bool HasAddrMap = AddrMap != nullptr;
   int NumPointers = MMOs.size() + HasPreInstrSymbol + HasPostInstrSymbol +
                     HasHeapAllocMarker + HasPCSections + HasCFIType + HasMMRAs +
-                    HasDS;
+                    HasDS + HasAddrMap;
 
   // Drop all extra info if there is none.
   if (NumPointers <= 0) {
@@ -345,10 +347,10 @@ void MachineInstr::setExtraInfo(MachineFunction &MF,
   // 32-bit pointers.
   // FIXME: Maybe we should make the symbols in the extra info mutable?
   else if (NumPointers > 1 || HasMMRAs || HasHeapAllocMarker || HasPCSections ||
-           HasCFIType || HasDS) {
-    Info.set<EIIK_OutOfLine>(
-        MF.createMIExtraInfo(MMOs, PreInstrSymbol, PostInstrSymbol,
-                             HeapAllocMarker, PCSections, CFIType, MMRAs, DS));
+           HasCFIType || HasDS || HasAddrMap) {
+    Info.set<EIIK_OutOfLine>(MF.createMIExtraInfo(
+        MMOs, PreInstrSymbol, PostInstrSymbol, HeapAllocMarker, PCSections,
+        CFIType, MMRAs, DS, AddrMap));
     return;
   }
 
@@ -367,7 +369,7 @@ void MachineInstr::dropMemRefs(MachineFunction &MF) {
 
   setExtraInfo(MF, {}, getPreInstrSymbol(), getPostInstrSymbol(),
                getHeapAllocMarker(), getPCSections(), getCFIType(),
-               getMMRAMetadata(), getDeactivationSymbol());
+               getMMRAMetadata(), getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::setMemRefs(MachineFunction &MF,
@@ -379,7 +381,7 @@ void MachineInstr::setMemRefs(MachineFunction &MF,
 
   setExtraInfo(MF, MMOs, getPreInstrSymbol(), getPostInstrSymbol(),
                getHeapAllocMarker(), getPCSections(), getCFIType(),
-               getMMRAMetadata(), getDeactivationSymbol());
+               getMMRAMetadata(), getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::addMemOperand(MachineFunction &MF,
@@ -404,7 +406,7 @@ void MachineInstr::cloneMemRefs(MachineFunction &MF, const MachineInstr &MI) {
       getPostInstrSymbol() == MI.getPostInstrSymbol() &&
       getHeapAllocMarker() == MI.getHeapAllocMarker() &&
       getPCSections() == MI.getPCSections() && getMMRAMetadata() &&
-      MI.getMMRAMetadata()) {
+      MI.getMMRAMetadata() && getAddrMap() == MI.getAddrMap()) {
     Info = MI.Info;
     return;
   }
@@ -490,7 +492,7 @@ void MachineInstr::setPreInstrSymbol(MachineFunction &MF, MCSymbol *Symbol) {
 
   setExtraInfo(MF, memoperands(), Symbol, getPostInstrSymbol(),
                getHeapAllocMarker(), getPCSections(), getCFIType(),
-               getMMRAMetadata(), getDeactivationSymbol());
+               getMMRAMetadata(), getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::setPostInstrSymbol(MachineFunction &MF, MCSymbol *Symbol) {
@@ -506,7 +508,7 @@ void MachineInstr::setPostInstrSymbol(MachineFunction &MF, MCSymbol *Symbol) {
 
   setExtraInfo(MF, memoperands(), getPreInstrSymbol(), Symbol,
                getHeapAllocMarker(), getPCSections(), getCFIType(),
-               getMMRAMetadata(), getDeactivationSymbol());
+               getMMRAMetadata(), getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::setHeapAllocMarker(MachineFunction &MF, MDNode *Marker) {
@@ -516,7 +518,7 @@ void MachineInstr::setHeapAllocMarker(MachineFunction &MF, MDNode *Marker) {
 
   setExtraInfo(MF, memoperands(), getPreInstrSymbol(), getPostInstrSymbol(),
                Marker, getPCSections(), getCFIType(), getMMRAMetadata(),
-               getDeactivationSymbol());
+               getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::setPCSections(MachineFunction &MF, MDNode *PCSections) {
@@ -526,7 +528,7 @@ void MachineInstr::setPCSections(MachineFunction &MF, MDNode *PCSections) {
 
   setExtraInfo(MF, memoperands(), getPreInstrSymbol(), getPostInstrSymbol(),
                getHeapAllocMarker(), PCSections, getCFIType(),
-               getMMRAMetadata(), getDeactivationSymbol());
+               getMMRAMetadata(), getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::setCFIType(MachineFunction &MF, uint32_t Type) {
@@ -536,7 +538,7 @@ void MachineInstr::setCFIType(MachineFunction &MF, uint32_t Type) {
 
   setExtraInfo(MF, memoperands(), getPreInstrSymbol(), getPostInstrSymbol(),
                getHeapAllocMarker(), getPCSections(), Type, getMMRAMetadata(),
-               getDeactivationSymbol());
+               getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::setMMRAMetadata(MachineFunction &MF, MDNode *MMRAs) {
@@ -546,7 +548,7 @@ void MachineInstr::setMMRAMetadata(MachineFunction &MF, MDNode *MMRAs) {
 
   setExtraInfo(MF, memoperands(), getPreInstrSymbol(), getPostInstrSymbol(),
                getHeapAllocMarker(), getPCSections(), getCFIType(), MMRAs,
-               getDeactivationSymbol());
+               getDeactivationSymbol(), getAddrMap());
 }
 
 void MachineInstr::setDeactivationSymbol(MachineFunction &MF, Value *DS) {
@@ -556,7 +558,17 @@ void MachineInstr::setDeactivationSymbol(MachineFunction &MF, Value *DS) {
 
   setExtraInfo(MF, memoperands(), getPreInstrSymbol(), getPostInstrSymbol(),
                getHeapAllocMarker(), getPCSections(), getCFIType(),
-               getMMRAMetadata(), DS);
+               getMMRAMetadata(), DS, getAddrMap());
+}
+
+void MachineInstr::setAddrMap(MachineFunction &MF, MDNode *AddrMap) {
+  // Do nothing if old and new annotations are the same.
+  if (AddrMap == getAddrMap())
+    return;
+
+  setExtraInfo(MF, memoperands(), getPreInstrSymbol(), getPostInstrSymbol(),
+               getHeapAllocMarker(), getPCSections(), getCFIType(),
+               getMMRAMetadata(), getDeactivationSymbol(), AddrMap);
 }
 
 void MachineInstr::cloneInstrSymbols(MachineFunction &MF,
@@ -573,6 +585,7 @@ void MachineInstr::cloneInstrSymbols(MachineFunction &MF,
   setHeapAllocMarker(MF, MI.getHeapAllocMarker());
   setPCSections(MF, MI.getPCSections());
   setMMRAMetadata(MF, MI.getMMRAMetadata());
+  setAddrMap(MF, MI.getAddrMap());
 }
 
 uint32_t MachineInstr::mergeFlagsWith(const MachineInstr &Other) const {

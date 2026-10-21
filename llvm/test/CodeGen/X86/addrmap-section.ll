@@ -120,9 +120,10 @@ define void @stack() {
 ; CHECK-SAME:  \"ptr_offset\":{\"const\":16,\"var\":[]},
 ; CHECK-SAME:  \"confidence\":\"heuristic\",{{.*}}\"reason\":\"source pointer not known\"}\n
 
-;; leaq (%rdi,%rdi,2): integer arithmetic. Only insn and source are recorded.
+;; leaq (%rdi,%rdi,2): integer arithmetic, known from the IR annotation. Only
+;; insn and source are recorded.
 ; CHECK-SAME:  {\"type\":\"record\",\"id\":3,\"function\":\"mul3\",\"kind\":\"not_pointer\",
-; CHECK-SAME:  \"addr\":{\"segment\":null,\"base_reg\":\"rdi\",\"index_reg\":\"rdi\",\"scale\":2,\"disp\":0,\"symbol\":null,\"rip_relative\":false}},\"source\":null,\"confidence\":\"heuristic\",\"reason\":\"integer arithmetic shape (no base, or base == index)\"}\n
+; CHECK-SAME:  \"addr\":{\"segment\":null,\"base_reg\":\"rdi\",\"index_reg\":\"rdi\",\"scale\":2,\"disp\":0,\"symbol\":null,\"rip_relative\":false}},\"source\":null,\"confidence\":\"exact\",\"reason\":\"integer arithmetic in the IR\"}\n
 
 ;; leaq 4(%rsp): address of a stack object. Without debug info there is no
 ;; variable to name it.

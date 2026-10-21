@@ -70,6 +70,7 @@ public:
 
   void reset() {
     Records.clear();
+    Stats = {};
     resetFunction(nullptr);
   }
 
@@ -113,6 +114,17 @@ private:
     std::string Json;
   };
   SmallVector<Record, 0> Records;
+
+  /// Counters for -addrmap-stats.
+  struct {
+    unsigned Addr = 0, AddrGOT = 0, Derive = 0, Mask = 0, NotPointer = 0;
+    unsigned UnknownBase = 0;
+    /// Target instructions that carried an annotation from the IR.
+    unsigned Annotated = 0;
+    /// Pointer arithmetic recorded without an annotation: either computed by
+    /// a later machine pass or an annotation lost on the way.
+    unsigned DeriveWithoutAnnotation = 0;
+  } Stats;
 
   /// Per-function tracking of the registers that hold the result of a
   /// recorded instruction, for derived_from (R-PTR-3). Only straight-line

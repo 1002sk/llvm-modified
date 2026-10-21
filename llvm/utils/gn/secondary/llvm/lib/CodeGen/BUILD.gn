@@ -22,6 +22,7 @@ static_library("CodeGen") {
     "//llvm/lib/Transforms/Utils",
   ]
   sources = [
+    "AddrMapAnnotate.cpp",
     "AddrMapTypes.cpp",
     "AggressiveAntiDepBreaker.cpp",
     "AllocationOrder.cpp",

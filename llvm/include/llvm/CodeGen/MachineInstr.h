@@ -178,7 +178,8 @@ private:
                              MCSymbol *PostInstrSymbol = nullptr,
                              MDNode *HeapAllocMarker = nullptr,
                              MDNode *PCSections = nullptr, uint32_t CFIType = 0,
-                             MDNode *MMRAs = nullptr, Value *DS = nullptr) {
+                             MDNode *MMRAs = nullptr, Value *DS = nullptr,
+                             MDNode *AddrMap = nullptr) {
       bool HasPreInstrSymbol = PreInstrSymbol != nullptr;
       bool HasPostInstrSymbol = PostInstrSymbol != nullptr;
       bool HasHeapAllocMarker = HeapAllocMarker != nullptr;
@@ -186,15 +187,17 @@ private:
       bool HasCFIType = CFIType != 0;
       bool HasPCSections = PCSections != nullptr;
       bool HasDS = DS != nullptr;
+      bool HasAddrMap = AddrMap != nullptr;
       auto *Result = new (Allocator.Allocate(
           totalSizeToAlloc<MachineMemOperand *, MCSymbol *, MDNode *, uint32_t,
                            Value *>(
               MMOs.size(), HasPreInstrSymbol + HasPostInstrSymbol,
-              HasHeapAllocMarker + HasPCSections + HasMMRAs, HasCFIType, HasDS),
+              HasHeapAllocMarker + HasPCSections + HasMMRAs + HasAddrMap,
+              HasCFIType, HasDS),
           alignof(ExtraInfo)))
           ExtraInfo(MMOs.size(), HasPreInstrSymbol, HasPostInstrSymbol,
                     HasHeapAllocMarker, HasPCSections, HasCFIType, HasMMRAs,
-                    HasDS);
+                    HasDS, HasAddrMap);
 
       // Copy the actual data into the trailing objects.
       llvm::copy(MMOs, Result->getTrailingObjects<MachineMemOperand *>());
@@ -216,6 +219,8 @@ private:
         Result->getTrailingObjects<MDNode *>()[MDNodeIdx++] = MMRAs;
       if (HasDS)
         Result->getTrailingObjects<Value *>()[0] = DS;
+      if (HasAddrMap)
+        Result->getTrailingObjects<MDNode *>()[MDNodeIdx++] = AddrMap;
 
       return Result;
     }
@@ -258,6 +263,13 @@ private:
       return HasDS ? getTrailingObjects<Value *>()[0] : 0;
     }
 
+    MDNode *getAddrMap() const {
+      return HasAddrMap
+                 ? getTrailingObjects<MDNode *>()[HasHeapAllocMarker +
+                                                  HasPCSections + HasMMRAs]
+                 : nullptr;
+    }
+
   private:
     friend TrailingObjects;
 
@@ -274,6 +286,7 @@ private:
     const bool HasCFIType;
     const bool HasMMRAs;
     const bool HasDS;
+    const bool HasAddrMap;
 
     // Implement the `TrailingObjects` internal API.
     size_t numTrailingObjects(OverloadToken<MachineMemOperand *>) const {
@@ -283,7 +296,7 @@ private:
       return HasPreInstrSymbol + HasPostInstrSymbol;
     }
     size_t numTrailingObjects(OverloadToken<MDNode *>) const {
-      return HasHeapAllocMarker + HasPCSections;
+      return HasHeapAllocMarker + HasPCSections + HasMMRAs + HasAddrMap;
     }
     size_t numTrailingObjects(OverloadToken<uint32_t>) const {
       return HasCFIType;
@@ -294,11 +307,12 @@ private:
     // the `create` routine above.
     ExtraInfo(int NumMMOs, bool HasPreInstrSymbol, bool HasPostInstrSymbol,
               bool HasHeapAllocMarker, bool HasPCSections, bool HasCFIType,
-              bool HasMMRAs, bool HasDS)
+              bool HasMMRAs, bool HasDS, bool HasAddrMap)
         : NumMMOs(NumMMOs), HasPreInstrSymbol(HasPreInstrSymbol),
           HasPostInstrSymbol(HasPostInstrSymbol),
           HasHeapAllocMarker(HasHeapAllocMarker), HasPCSections(HasPCSections),
-          HasCFIType(HasCFIType), HasMMRAs(HasMMRAs), HasDS(HasDS) {}
+          HasCFIType(HasCFIType), HasMMRAs(HasMMRAs), HasDS(HasDS),
+          HasAddrMap(HasAddrMap) {}
   };
 
   /// Enumeration of the kinds of inline extra info available. It is important
@@ -885,6 +899,16 @@ public:
       return nullptr;
     if (ExtraInfo *EI = Info.get<EIIK_OutOfLine>())
       return EI->getDeactivationSymbol();
+    return nullptr;
+  }
+
+  /// Helper to extract the !addrmap annotation, which describes the pointer
+  /// this instruction computes (or says it computes an integer).
+  MDNode *getAddrMap() const {
+    if (!Info)
+      return nullptr;
+    if (ExtraInfo *EI = Info.get<EIIK_OutOfLine>())
+      return EI->getAddrMap();
     return nullptr;
   }
 
@@ -1997,6 +2021,10 @@ public:
 
   LLVM_ABI void setDeactivationSymbol(MachineFunction &MF, Value *DS);
 
+  /// Set the !addrmap annotation. It does not affect code generation and is
+  /// not compared by isIdenticalTo.
+  LLVM_ABI void setAddrMap(MachineFunction &MF, MDNode *AddrMap);
+
   /// Return the MIFlags which represent both MachineInstrs. This
   /// should be used when merging two MachineInstrs into one. This routine does
   /// not modify the MIFlags of this MachineInstr.
@@ -2116,7 +2144,8 @@ private:
   void setExtraInfo(MachineFunction &MF, ArrayRef<MachineMemOperand *> MMOs,
                     MCSymbol *PreInstrSymbol, MCSymbol *PostInstrSymbol,
                     MDNode *HeapAllocMarker, MDNode *PCSections,
-                    uint32_t CFIType, MDNode *MMRAs, Value *DS);
+                    uint32_t CFIType, MDNode *MMRAs, Value *DS,
+                    MDNode *AddrMap);
 };
 
 /// Special DenseMapInfo traits to compare MachineInstr* by *value* of the

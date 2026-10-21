@@ -10,6 +10,8 @@
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/Support/MathExtras.h"
 
 using namespace llvm;
@@ -223,7 +225,7 @@ static void addOffsetZeroAlternatives(TypeView V, ResolvedPath &R) {
     SmallVector<const DIDerivedType *, 8> Members = getMembers(CT);
     if (CT->getTag() == dwarf::DW_TAG_union_type) {
       for (const DIDerivedType *M : Members) {
-        Alternative A{Chain, Reason};
+        Alternative A{Chain, Reason, M->getBaseType()};
         A.Steps.push_back({true, M->getName().str()});
         R.Alternatives.push_back(std::move(A));
       }
@@ -235,7 +237,7 @@ static void addOffsetZeroAlternatives(TypeView V, ResolvedPath &R) {
     V = {Members.front()->getBaseType(), 0};
   }
   if (!Chain.empty())
-    R.Alternatives.push_back({Chain, Reason});
+    R.Alternatives.push_back({Chain, Reason, V.Dim == 0 ? V.Ty : nullptr});
 }
 
 static void setArrayInfo(PathStep &S, TypeView V) {
@@ -256,14 +258,15 @@ ResolvedPath addrmap::resolvePath(const DIType *Root, int64_t Offset,
 
   std::optional<uint64_t> RootSize = getViewSize(Cur);
   const DIType *Stripped = stripTypedefsAndQualifiers(Root);
-  if (!Stripped || !RootSize || *RootSize == 0) {
-    R.Unresolved = "size of " + R.FinalTypeName + " is unknown";
-    R.HasUnmatchedVar = !Vars.empty();
+  // Arithmetic on a void or char pointer is only a byte offset (R-PTR-6).
+  if (ViaPointer &&
+      (!Stripped || (isa<DIBasicType>(Stripped) && RootSize == 1u))) {
+    R.Unresolved = "byte-addressed pointee " + R.FinalTypeName;
+    R.ByteAddressed = true;
     return R;
   }
-  // Arithmetic on a void or char pointer is only a byte offset (R-PTR-6).
-  if (ViaPointer && isa<DIBasicType>(Stripped) && *RootSize == 1) {
-    R.Unresolved = "byte-addressed pointee " + R.FinalTypeName;
+  if (!Stripped || !RootSize || *RootSize == 0) {
+    R.Unresolved = "size of " + R.FinalTypeName + " is unknown";
     R.HasUnmatchedVar = !Vars.empty();
     return R;
   }
@@ -285,7 +288,9 @@ ResolvedPath addrmap::resolvePath(const DIType *Root, int64_t Offset,
     S.Size = ElemSize;
     setArrayInfo(S, Elem);
     if (UseVar) {
-      S.IndexReg = Vars[NextVar++].Reg;
+      if (!Vars[NextVar].Reg.empty())
+        S.IndexReg = Vars[NextVar].Reg;
+      ++NextVar;
       AbsKnown = false;
     } else {
       S.IndexValue = K;
@@ -370,8 +375,9 @@ ResolvedPath addrmap::resolvePath(const DIType *Root, int64_t Offset,
     if (Candidates.size() > 1) {
       // Overlapping union members (R-PATH-4).
       for (const DIDerivedType *M : Candidates)
-        R.Alternatives.push_back(
-            {{{true, M->getName().str()}}, "member of " + getViewName(Cur)});
+        R.Alternatives.push_back({{{true, M->getName().str()}},
+                                  "member of " + getViewName(Cur),
+                                  M->getBaseType()});
       break;
     }
 
@@ -395,6 +401,7 @@ ResolvedPath addrmap::resolvePath(const DIType *Root, int64_t Offset,
 
   R.HasUnmatchedVar = NextVar < Vars.size();
   R.FinalTypeName = getViewName(Cur);
+  R.FinalType = Cur.Dim == 0 ? Cur.Ty : nullptr;
   return R;
 }
 
@@ -424,4 +431,91 @@ std::string addrmap::formatPath(StringRef RootExpr, bool ViaPointer,
   for (const AltStep &Step : Extra)
     Emit(Step.IsField, Step.Name);
   return S;
+}
+
+MDNode *addrmap::createAnnotation(LLVMContext &Ctx, const Annotation &A) {
+  if (A.Kind == Annotation::Integer)
+    return MDTuple::get(Ctx, {MDString::get(Ctx, "int")});
+
+  auto *I64 = Type::getInt64Ty(Ctx);
+  auto Int = [&](int64_t V) {
+    return ConstantAsMetadata::get(ConstantInt::getSigned(I64, V));
+  };
+  StringRef RootKind;
+  Metadata *Root = nullptr;
+  switch (A.RootKind) {
+  case Annotation::Unknown:
+    RootKind = "unknown";
+    break;
+  case Annotation::Global:
+    RootKind = "global";
+    Root = ValueAsMetadata::get(const_cast<GlobalVariable *>(A.GV));
+    break;
+  case Annotation::Variable:
+    RootKind = "var";
+    Root = const_cast<DILocalVariable *>(A.Var);
+    break;
+  case Annotation::Pointee:
+    RootKind = "pointee";
+    Root = const_cast<DIType *>(A.PointeeType);
+    break;
+  }
+  SmallVector<Metadata *, 2> Scales;
+  for (int64_t S : A.Scales)
+    Scales.push_back(Int(S));
+  Metadata *Ops[] = {
+      MDString::get(Ctx, A.Kind == Annotation::Mask ? "mask" : "ptr"),
+      MDString::get(Ctx, RootKind),
+      Root,
+      A.Offset ? Int(*A.Offset) : nullptr,
+      MDTuple::get(Ctx, Scales),
+      MDString::get(Ctx, A.RootExpr),
+      const_cast<DIType *>(A.SrcType),
+      ConstantAsMetadata::get(
+          ConstantInt::get(Type::getInt1Ty(Ctx), A.Heuristic))};
+  return MDTuple::get(Ctx, Ops);
+}
+
+static std::optional<int64_t> getIntOperand(const MDNode *MD, unsigned I) {
+  if (auto *C = mdconst::dyn_extract_or_null<ConstantInt>(MD->getOperand(I)))
+    return C->getSExtValue();
+  return std::nullopt;
+}
+
+std::optional<Annotation> addrmap::parseAnnotation(const MDNode *MD) {
+  if (!MD || MD->getNumOperands() == 0)
+    return std::nullopt;
+  auto *Tag = dyn_cast_or_null<MDString>(MD->getOperand(0));
+  if (!Tag)
+    return std::nullopt;
+  Annotation A;
+  if (Tag->getString() == "int") {
+    A.Kind = Annotation::Integer;
+    return A;
+  }
+  if (MD->getNumOperands() != 8)
+    return std::nullopt;
+  A.Kind = Tag->getString() == "mask" ? Annotation::Mask : Annotation::Pointer;
+  StringRef RootKind = cast<MDString>(MD->getOperand(1))->getString();
+  const Metadata *Root = MD->getOperand(2);
+  if (RootKind == "global") {
+    A.GV = mdconst::dyn_extract_or_null<GlobalVariable>(Root);
+    A.RootKind = A.GV ? Annotation::Global : Annotation::Unknown;
+  } else if (RootKind == "var") {
+    A.Var = dyn_cast_or_null<DILocalVariable>(Root);
+    A.RootKind = A.Var ? Annotation::Variable : Annotation::Unknown;
+  } else if (RootKind == "pointee") {
+    A.RootKind = Annotation::Pointee;
+    A.PointeeType = dyn_cast_or_null<DIType>(Root);
+  }
+  A.Offset = getIntOperand(MD, 3);
+  if (auto *Scales = dyn_cast_or_null<MDTuple>(MD->getOperand(4)))
+    for (unsigned I = 0, E = Scales->getNumOperands(); I != E; ++I)
+      if (std::optional<int64_t> S = getIntOperand(Scales, I))
+        A.Scales.push_back(*S);
+  if (auto *Expr = dyn_cast_or_null<MDString>(MD->getOperand(5)))
+    A.RootExpr = Expr->getString().str();
+  A.SrcType = dyn_cast_or_null<DIType>(MD->getOperand(6));
+  A.Heuristic = getIntOperand(MD, 7).value_or(0);
+  return A;
 }

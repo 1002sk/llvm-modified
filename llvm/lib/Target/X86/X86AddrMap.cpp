@@ -13,6 +13,7 @@
 #include "X86RegisterInfo.h"
 #include "X86Subtarget.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -26,6 +27,7 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/raw_ostream.h"
@@ -33,6 +35,11 @@
 #include <optional>
 
 using namespace llvm;
+
+static cl::opt<bool>
+    AddrMapStats("addrmap-stats",
+                 cl::desc("Print statistics of the .llvm_addrmap section"),
+                 cl::init(false));
 
 using BaseObject = X86AddrMap::BaseObject;
 using PointerValue = X86AddrMap::PointerValue;
@@ -50,6 +57,19 @@ struct AddrExpr {
   int64_t Disp = 0;
   /// The symbolic part of the displacement or immediate, if any.
   const MachineOperand *Sym = nullptr;
+};
+
+/// An ALU instruction that may do pointer arithmetic: Dst = Src op operand.
+struct ALUOp {
+  const char *Mnemonic;
+  Register Src;
+  /// The immediate operand, negated for a subtraction.
+  int64_t Imm = 0;
+  /// The register operand, if any.
+  Register RegOperand;
+  /// The other operand is loaded from memory.
+  bool HasMemOperand = false;
+  bool IsMask = false;
 };
 
 /// A variable whose stack slot contains the address of an instruction.
@@ -84,6 +104,65 @@ static const char *getMnemonic(unsigned Opcode) {
   default:
     return nullptr;
   }
+}
+
+static std::optional<ALUOp> getALUOp(const MachineInstr &MI) {
+  ALUOp Op;
+  bool IsSub = false;
+  switch (MI.getOpcode()) {
+  case X86::ADD64ri32:
+  case X86::ADD64ri8:
+  case X86::ADD64rr:
+  case X86::ADD64rm:
+    Op.Mnemonic = "addq";
+    break;
+  case X86::SUB64ri32:
+  case X86::SUB64ri8:
+  case X86::SUB64rr:
+  case X86::SUB64rm:
+    Op.Mnemonic = "subq";
+    IsSub = true;
+    break;
+  case X86::AND64ri32:
+  case X86::AND64ri8:
+  case X86::AND64rr:
+    Op.Mnemonic = "andq";
+    Op.IsMask = true;
+    break;
+  case X86::OR64ri32:
+  case X86::OR64ri8:
+  case X86::OR64rr:
+    Op.Mnemonic = "orq";
+    Op.IsMask = true;
+    break;
+  case X86::INC64r:
+    Op.Mnemonic = "incq";
+    Op.Src = MI.getOperand(1).getReg();
+    Op.Imm = 1;
+    return Op;
+  case X86::DEC64r:
+    Op.Mnemonic = "decq";
+    Op.Src = MI.getOperand(1).getReg();
+    Op.Imm = -1;
+    return Op;
+  default:
+    return std::nullopt;
+  }
+  Op.Src = MI.getOperand(1).getReg();
+  const MachineOperand &Other = MI.getOperand(2);
+  if (MI.getOpcode() == X86::ADD64rm || MI.getOpcode() == X86::SUB64rm)
+    Op.HasMemOperand = true;
+  else if (Other.isImm())
+    Op.Imm = IsSub ? -Other.getImm() : Other.getImm();
+  else if (Other.isReg())
+    Op.RegOperand = Other.getReg();
+  return Op;
+}
+
+/// Is \p S a plain C identifier (a variable name rather than an expression)?
+static bool isIdentifier(StringRef S) {
+  return !S.empty() && !isDigit(S.front()) &&
+         all_of(S, [](char C) { return isAlnum(C) || C == '_'; });
 }
 
 static bool isSymbolOperand(const MachineOperand &MO) {
@@ -204,6 +283,21 @@ static BaseObject getGlobalBase(const GlobalValue &GV, const DataLayout &DL) {
   B.TypeSize = B.HasType ? addrmap::getTypeSize(B.Type) : B.Size;
   if (!B.TypeSize)
     B.TypeSize = B.Size;
+  return B;
+}
+
+static BaseObject getVariableBase(const DILocalVariable &Var) {
+  BaseObject B;
+  B.Kind = Var.isParameter() ? "param" : "local";
+  B.Name = Var.getName().str();
+  B.RootExpr = *B.Name;
+  B.Type = Var.getType();
+  B.HasType = true;
+  B.Size = B.TypeSize = addrmap::getTypeSize(B.Type);
+  if (!B.Size)
+    B.SizeUnknown = "unknown";
+  B.DeclFile = Var.getFilename();
+  B.DeclLine = Var.getLine();
   return B;
 }
 
@@ -426,20 +520,39 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
     return std::nullopt;
 
   unsigned Opcode = MI.getOpcode();
-  const char *Mnemonic = getMnemonic(Opcode);
-  if (!Mnemonic)
-    return std::nullopt;
-
   const MachineFunction &MF = *MI.getMF();
+  std::optional<addrmap::Annotation> Ann =
+      addrmap::parseAnnotation(MI.getAddrMap());
+  bool AnnInt = Ann && Ann->Kind == addrmap::Annotation::Integer;
+  bool AnnPtr = Ann && !AnnInt;
+
   AddrExpr Addr;
-  bool IsMem = Opcode != X86::MOV64ri && Opcode != X86::MOV64ri32 &&
+  const char *Mnemonic = getMnemonic(Opcode);
+  std::optional<ALUOp> ALU;
+  if (!Mnemonic) {
+    // Pointer arithmetic done by ALU instructions: annotated as computing a
+    // pointer, or operating on a register that holds a recorded pointer.
+    ALU = getALUOp(MI);
+    if (!ALU || AnnInt)
+      return std::nullopt;
+    if (!AnnPtr && !LiveValues.count(ALU->Src.id()))
+      return std::nullopt;
+    Mnemonic = ALU->Mnemonic;
+    Addr.Base = ALU->Src;
+    Addr.Disp = ALU->Imm;
+    Addr.Index = ALU->RegOperand;
+  }
+
+  bool IsMem = !ALU && Opcode != X86::MOV64ri && Opcode != X86::MOV64ri32 &&
                Opcode != X86::MOV32ri && Opcode != X86::MOV64rr;
   // The TLS pseudos are lowered to a LEA of the TLS symbol into a fixed
   // register (followed by a call), so the label lands on that LEA.
   bool IsTLSPseudo = Opcode == X86::TLS_addr64 ||
                      Opcode == X86::TLS_base_addr64 ||
                      Opcode == X86::TLS_desc64;
-  if (IsMem) {
+  if (ALU) {
+    // Operands were taken above.
+  } else if (IsMem) {
     const MCInstrDesc &Desc = MI.getDesc();
     int MemOp = 0;
     if (!IsTLSPseudo) {
@@ -484,28 +597,36 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
                   : IsTLSPseudo             ? Register(X86::RDI)
                                             : MI.getOperand(0).getReg();
   bool Is64BitDest = X86::GR64RegClass.contains(Dest);
-  bool IsStack = !Addr.Sym && isFrameRegister(Addr.Base, MF);
+  bool IsStack = !ALU && !Addr.Sym && isFrameRegister(Addr.Base, MF);
   std::string SymbolName;
   if (Addr.Sym)
     SymbolName = getOperandSymbol(*Addr.Sym, AP)->getName().str();
 
-  // Classify the instruction. Without annotations from earlier stages, a LEA
-  // on plain registers is assumed to derive a pointer from its base register
-  // unless its shape says it is integer arithmetic.
+  // Classify the instruction. The annotation from the IR tells pointer
+  // arithmetic from integer arithmetic; without it, a LEA on plain registers
+  // is assumed to derive a pointer unless its shape says otherwise.
   StringRef Kind;
   std::optional<std::string> NotPointerReason;
-  bool NotPointerFromWidth = false;
-  if (IsLoad) {
+  StringRef NotPointerConfidence = "heuristic";
+  if (ALU) {
+    Kind = ALU->IsMask ? "mask" : "derive";
+  } else if (IsLoad) {
     Kind = "addr_got";
   } else if (Addr.Sym) {
     Kind = "addr";
   } else if (!Is64BitDest) {
     // Pointers are 64 bits wide on x86-64.
     Kind = "not_pointer";
-    NotPointerFromWidth = true;
+    NotPointerConfidence = "derived";
     NotPointerReason = "result narrower than a pointer";
   } else if (IsStack) {
     Kind = "addr";
+  } else if (AnnInt) {
+    Kind = "not_pointer";
+    NotPointerConfidence = "exact";
+    NotPointerReason = "integer arithmetic in the IR";
+  } else if (AnnPtr) {
+    Kind = Ann->Kind == addrmap::Annotation::Mask ? "mask" : "derive";
   } else if (!Addr.Base || Addr.Base == Addr.Index) {
     Kind = "not_pointer";
     NotPointerReason = "integer arithmetic shape (no base, or base == index)";
@@ -521,12 +642,58 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
   BaseObject &Base = V.Base;
   if (Addr.Index)
     V.Vars.push_back({getRegName(Addr.Index).str(), Addr.Scale});
+  if (ALU && ALU->HasMemOperand)
+    V.Vars.push_back({"", 1});
 
-  SmallVector<StringRef, 3> Provenance = {"machine-operand"};
+  SmallVector<StringRef, 4> Provenance = {"machine-operand"};
   SmallVector<std::string, 1> SharedSlotVars;
   std::optional<unsigned> DerivedFrom;
   std::optional<std::string> SrcExpr, SrcVar, SrcType;
   bool Ambiguous = false;
+  bool Heuristic = false;
+
+  // Take the base from the annotation. The annotation describes the whole
+  // value computed by the instruction, so its offsets replace the operands.
+  auto ApplyAnnotation = [&]() {
+    if (!AnnPtr || Ann->RootKind == addrmap::Annotation::Unknown)
+      return false;
+    switch (Ann->RootKind) {
+    case addrmap::Annotation::Global:
+      Base = getGlobalBase(*Ann->GV, MF.getDataLayout());
+      break;
+    case addrmap::Annotation::Variable:
+      Base = getVariableBase(*Ann->Var);
+      break;
+    case addrmap::Annotation::Pointee:
+      Base = BaseObject();
+      Base.Kind = "pointee";
+      Base.SizeUnknown = "pointee";
+      Base.Type = Ann->PointeeType;
+      Base.HasType = true;
+      Base.TypeSize = addrmap::getTypeSize(Ann->PointeeType);
+      Base.RootExpr = Ann->RootExpr;
+      Base.ViaPointer = true;
+      SrcExpr = Ann->RootExpr;
+      if (isIdentifier(Ann->RootExpr))
+        SrcVar = Ann->RootExpr;
+      SrcType = addrmap::getCTypeName(Ann->SrcType);
+      break;
+    case addrmap::Annotation::Unknown:
+      llvm_unreachable("handled above");
+    }
+    V.ConstOffset = Ann->Offset;
+    // Name the register of a single variable term.
+    StringRef IndexReg =
+        Addr.Index && Ann->Scales.size() == 1 ? getRegName(Addr.Index) : "";
+    V.Vars.clear();
+    for (int64_t Scale : Ann->Scales)
+      V.Vars.push_back({IndexReg.str(), unsigned(Scale)});
+    if (Kind == "mask")
+      V.ConstOffset.reset();
+    Heuristic = Ann->Heuristic;
+    Provenance.push_back("ir-annotation");
+    return true;
+  };
 
   if (Opcode == X86::TLS_base_addr64 ||
       (IsTLSPseudo && Addr.Sym && !Addr.Sym->isGlobal())) {
@@ -540,20 +707,9 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
   } else if (IsStack) {
     SmallVector<StackVariable, 1> Vars =
         findStackVariables(MF, Addr.Base, Addr.Disp, MI.getDebugLoc().get());
-    if (Vars.empty()) {
-      Base.Reason = "stack object without a variable";
-    } else {
+    if (!Vars.empty()) {
       const DILocalVariable *Var = Vars.front().Var;
-      Base.Kind = Var->isParameter() ? "param" : "local";
-      Base.Name = Var->getName().str();
-      Base.RootExpr = *Base.Name;
-      Base.Type = Var->getType();
-      Base.HasType = true;
-      Base.Size = Base.TypeSize = addrmap::getTypeSize(Base.Type);
-      if (!Base.Size)
-        Base.SizeUnknown = "unknown";
-      Base.DeclFile = Var->getFilename();
-      Base.DeclLine = Var->getLine();
+      Base = getVariableBase(*Var);
       V.ConstOffset = Vars.front().Offset;
       Provenance.push_back("debuginfo-variable");
       // Variables sharing a stack slot (StackColoring).
@@ -567,27 +723,39 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
                 : addrmap::formatPath(Name, false, P.Steps));
       }
       Ambiguous = !SharedSlotVars.empty();
+    } else if (!ApplyAnnotation()) {
+      Base.Reason = "stack object without a variable";
     }
-  } else if (Kind == "derive") {
+  } else if (Kind == "derive" || Kind == "mask") {
     // The offset from the source pointer, unless it is known to point into
     // an object.
     V.ConstOffset = Addr.Disp;
     auto It = LiveValues.find(Addr.Base);
-    if (It != LiveValues.end()) {
+    const PointerValue *Src =
+        It != LiveValues.end() ? &Values[It->second] : nullptr;
+    if (Src) {
+      DerivedFrom = Src->RecordId;
+      Provenance.push_back("derived-from-record");
+    }
+    if (ApplyAnnotation()) {
+      // The annotation names the source pointer if it is a pointer value;
+      // otherwise the tracked register does.
+      if (!SrcExpr && Src) {
+        SrcExpr = Src->PathStr;
+        SrcType = Src->ResultType;
+      }
+    } else if (Src) {
       // Derived from a pointer made by an earlier recorded instruction.
-      const PointerValue &Src = Values[It->second];
-      Base = Src.Base;
-      if (Src.ConstOffset)
-        V.ConstOffset = *Src.ConstOffset + Addr.Disp;
+      Base = Src->Base;
+      if (Src->ConstOffset && Kind != "mask")
+        V.ConstOffset = *Src->ConstOffset + Addr.Disp;
       else
         V.ConstOffset.reset();
-      SmallVector<addrmap::VarTerm, 2> Vars(Src.Vars);
+      SmallVector<addrmap::VarTerm, 2> Vars(Src->Vars);
       append_range(Vars, V.Vars);
       V.Vars = std::move(Vars);
-      DerivedFrom = Src.RecordId;
-      SrcExpr = Src.PathStr;
-      SrcType = Src.ResultType;
-      Provenance.push_back("derived-from-record");
+      SrcExpr = Src->PathStr;
+      SrcType = Src->ResultType;
     } else if (const DILocalVariable *Var =
                    findVariableInRegister(MI, Addr.Base)) {
       SrcExpr = SrcVar = Var->getName().str();
@@ -604,7 +772,8 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
         Base.TypeSize = addrmap::getTypeSize(Pointee);
         Base.RootExpr = *SrcVar;
         Base.ViaPointer = true;
-      } else if (isa_and_nonnull<DIBasicType>(
+      } else if (!AnnPtr &&
+                 isa_and_nonnull<DIBasicType>(
                      addrmap::stripTypedefsAndQualifiers(Var->getType()))) {
         // The LEA computes on an integer variable, e.g. "a + b" or "n - 1".
         Kind = "not_pointer";
@@ -618,13 +787,34 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
       Base.SizeUnknown = "pointee";
       Base.Reason = "source pointer not known";
     }
+    if (Kind == "mask")
+      V.ConstOffset.reset();
+  }
+
+  // A pointer that moves in a loop (its offset differs between iterations)
+  // is taken to step through elements of an array: b[?].
+  bool LoopVarying = false;
+  if (Base.HasType && !V.ConstOffset && Kind == "derive") {
+    const DIType *Root = Base.Type;
+    std::optional<uint64_t> Stride;
+    if (Base.ViaPointer) {
+      Stride = addrmap::getTypeSize(Root);
+    } else if (auto *CT = dyn_cast_or_null<DICompositeType>(
+                   addrmap::stripTypedefsAndQualifiers(Root));
+               CT && CT->getTag() == dwarf::DW_TAG_array_type) {
+      Stride = addrmap::getTypeSize(CT->getBaseType());
+    }
+    if (Stride && *Stride) {
+      V.Vars.assign(1, {"", unsigned(*Stride)});
+      LoopVarying = true;
+    }
   }
 
   // Turn the offset into an access path using the type of the base.
   addrmap::ResolvedPath Path;
   bool Resolved = false;
-  if (Base.HasType && V.ConstOffset) {
-    Path = addrmap::resolvePath(Base.Type, *V.ConstOffset, V.Vars,
+  if (Base.HasType && (V.ConstOffset || LoopVarying)) {
+    Path = addrmap::resolvePath(Base.Type, V.ConstOffset.value_or(0), V.Vars,
                                 Base.ViaPointer);
     // A variable term that is not an array subscript means the address is an
     // intermediate value of a longer computation, which has no access path.
@@ -642,6 +832,9 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
     V.PathStr = addrmap::formatPath(Base.RootExpr, Base.ViaPointer, Path.Steps);
     if (Path.ByteOffsetInField == 0)
       V.ResultType = addrmap::getPointerTypeName(Path.FinalTypeName);
+  } else if (Path.ByteAddressed) {
+    // The pointer keeps its type; only the byte offset is recorded.
+    V.ResultType = addrmap::getPointerTypeName(Path.FinalTypeName);
   } else if (Base.Name && V.ConstOffset == 0 && V.Vars.empty()) {
     V.PathStr = *Base.Name;
   }
@@ -652,23 +845,48 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
     OutOfBounds = *V.ConstOffset < 0 || uint64_t(*V.ConstOffset) >= *Base.Size;
 
   std::optional<std::string> Reason = Base.Reason;
-  if (!Reason && Path.Unresolved)
+  if (!Reason && Path.Unresolved && !Path.ByteAddressed)
     Reason = Path.Unresolved;
   if (!Reason && Path.HasUnmatchedVar)
     Reason = "variable offset not matched to an array subscript";
-  if (!Reason && Base.HasType && !V.ConstOffset)
+  if (!Reason && Base.HasType && !V.ConstOffset && !LoopVarying)
     Reason = "constant offset not known";
   if (!Reason && Ambiguous)
     Reason = "stack slot shared by several variables";
+  if (!Reason && Heuristic)
+    Reason = "pointer computed through integer arithmetic";
+  if (!Reason && LoopVarying)
+    Reason = "offset varies in a loop";
+  if (Kind == "mask")
+    Reason = "bits of the pointer are masked";
 
   bool BaseKnown =
       Base.Kind != "unknown" && !(Base.Kind == "pointee" && !Base.HasType);
+
+  if (Kind == "addr")
+    ++Stats.Addr;
+  else if (Kind == "addr_got")
+    ++Stats.AddrGOT;
+  else if (Kind == "derive")
+    ++Stats.Derive;
+  else if (Kind == "mask")
+    ++Stats.Mask;
+  else
+    ++Stats.NotPointer;
+  if (Kind != "not_pointer" && !BaseKnown)
+    ++Stats.UnknownBase;
+  if (Ann)
+    ++Stats.Annotated;
+  if ((Kind == "derive" || Kind == "mask") && !Ann)
+    ++Stats.DeriveWithoutAnnotation;
   StringRef Confidence;
   if (Kind == "not_pointer")
-    Confidence = NotPointerFromWidth ? "derived" : "heuristic";
+    Confidence = NotPointerConfidence;
   else
-    Confidence = BaseKnown && !Path.HasUnmatchedVar && !Ambiguous ? "derived"
-                                                                  : "heuristic";
+    Confidence = BaseKnown && !Path.HasUnmatchedVar && !Ambiguous &&
+                         !Heuristic && !LoopVarying && Kind != "mask"
+                     ? "derived"
+                     : "heuristic";
 
   // Serialize the record.
   std::string Json;
@@ -744,7 +962,10 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
       J.attributeArray("var", [&] {
         for (const addrmap::VarTerm &T : V.Vars)
           J.object([&] {
-            J.attribute("reg", T.Reg);
+            if (T.Reg.empty())
+              J.attribute("reg", nullptr);
+            else
+              J.attribute("reg", T.Reg);
             J.attribute("scale", T.Scale);
           });
       });
@@ -862,4 +1083,26 @@ void X86AddrMap::emitSection(const Module &M, AsmPrinter &AP) {
   // JSON Lines body and padding.
   OS.emitBytes(Json);
   OS.emitZeros(UnitSize - JsonOffset - JsonSize);
+
+  if (AddrMapStats) {
+    // The IR instructions annotated as computing a pointer. Those folded into
+    // an addressing mode have no instruction of their own.
+    unsigned IRPointers = 0;
+    unsigned KindID = M.getContext().getMDKindID(addrmap::AnnotationKindName);
+    for (const Function &F : M)
+      for (const BasicBlock &BB : F)
+        for (const Instruction &I : BB)
+          if (std::optional<addrmap::Annotation> A =
+                  addrmap::parseAnnotation(I.getMetadata(KindID)))
+            IRPointers += A->Kind != addrmap::Annotation::Integer;
+    errs() << "addrmap-stats: " << M.getSourceFileName()
+           << ": targets=" << Records.size() << " addr=" << Stats.Addr
+           << " addr_got=" << Stats.AddrGOT << " derive=" << Stats.Derive
+           << " mask=" << Stats.Mask << " not_pointer=" << Stats.NotPointer
+           << " unknown_base=" << Stats.UnknownBase
+           << " annotated=" << Stats.Annotated
+           << " ir_pointer_annotations=" << IRPointers
+           << " derive_without_annotation=" << Stats.DeriveWithoutAnnotation
+           << "\n";
+  }
 }

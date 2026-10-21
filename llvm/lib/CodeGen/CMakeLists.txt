@@ -23,6 +23,7 @@ if (DEFINED LLVM_HAVE_TF_AOT OR LLVM_HAVE_TFLITE)
 endif()
 
 add_llvm_component_library(LLVMCodeGen
+  AddrMapAnnotate.cpp
   AddrMapTypes.cpp
   AggressiveAntiDepBreaker.cpp
   AllocationOrder.cpp
