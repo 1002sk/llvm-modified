@@ -431,13 +431,6 @@ static void writeSourceLocation(json::OStream &J, const DebugLoc &DL) {
   });
 }
 
-static void writeOptionalReg(json::OStream &J, StringRef Key, Register Reg) {
-  if (Reg)
-    J.attribute(Key, getRegName(Reg));
-  else
-    J.attribute(Key, nullptr);
-}
-
 template <typename T>
 static void writeOptional(json::OStream &J, StringRef Key,
                           const std::optional<T> &V) {
@@ -888,35 +881,114 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
                      ? "derived"
                      : "heuristic";
 
-  // Serialize the record.
-  std::string Json;
-  raw_string_ostream OS(Json);
-  json::OStream J(OS);
+  RecordData R;
+  R.Id = V.RecordId;
+  R.Function = MF.getName().str();
+  R.Kind = Kind;
+  R.Mnemonic = Mnemonic;
+  R.DestReg = getRegName(Dest).str();
+  if (Addr.Segment)
+    R.Segment = getRegName(Addr.Segment).str();
+  if (Addr.Base)
+    R.BaseReg = getRegName(Addr.Base).str();
+  if (Addr.Index)
+    R.IndexReg = getRegName(Addr.Index).str();
+  R.Scale = Addr.Scale;
+  R.Disp = Addr.Disp;
+  if (Addr.Sym)
+    R.Symbol = SymbolName;
+  R.RipRelative = Addr.Base == X86::RIP;
+  R.Loc = MI.getDebugLoc();
+  R.Confidence = Confidence;
+  if (Kind == "not_pointer") {
+    R.Reason = *NotPointerReason;
+  } else {
+    R.Base = Base;
+    R.SrcExpr = SrcExpr;
+    R.SrcVar = SrcVar;
+    R.SrcType = SrcType;
+    R.DerivedFrom = DerivedFrom;
+    R.Path = std::move(Path);
+    R.PathResolved = Resolved;
+    R.PathStr = V.PathStr;
+    R.ConstOffset = V.ConstOffset;
+    R.Vars = V.Vars;
+    R.ResultType = V.ResultType;
+    R.SharedSlotVars = std::move(SharedSlotVars);
+    R.OutOfBounds = OutOfBounds;
+    R.Provenance = std::move(Provenance);
+    R.Reason = Reason;
+    if (Resolved)
+      markIntermediates(R);
+  }
+
+  MCSymbol *Label = AP.OutContext.createTempSymbol("addrmap");
+  AP.OutStreamer->emitLabel(Label);
+  Records.push_back({Label, std::move(R)});
+  if (Kind == "not_pointer")
+    return std::nullopt;
+  return V;
+}
+
+void X86AddrMap::markIntermediates(const RecordData &Final) {
+  // Walk back through the unresolved derive records the final pointer was
+  // computed from in this basic block, e.g. "leaq (%rdi,%rax,4), %rax" before
+  // "addq $12, %rax" for &p->items[i].pos. They compute partial sums that no
+  // C expression denotes.
+  std::optional<unsigned> Id = Final.DerivedFrom;
+  while (Id) {
+    RecordData &R = Records[*Id].Data;
+    if (R.Kind != "derive" || R.PathResolved || R.IntermediateOf)
+      break;
+    R.IntermediateOf = Final.Id;
+    R.Reason = "intermediate value of " + Final.PathStr;
+    ++Stats.Intermediate;
+    if (R.Base.Kind == "unknown" ||
+        (R.Base.Kind == "pointee" && !R.Base.HasType)) {
+      // The final pointer tells what the computation is based on.
+      R.Base = Final.Base;
+      R.SrcExpr = Final.SrcExpr;
+      R.SrcVar = Final.SrcVar;
+      R.SrcType = Final.SrcType;
+      R.ConstOffset.reset();
+    }
+    R.Confidence = "derived";
+    R.Provenance.push_back("intermediate");
+    Id = R.DerivedFrom;
+  }
+}
+
+static void writeRecord(json::OStream &J, const X86AddrMap::RecordData &R) {
+  auto WriteReg = [&](StringRef Key, const std::string &Reg) {
+    if (Reg.empty())
+      J.attribute(Key, nullptr);
+    else
+      J.attribute(Key, Reg);
+  };
+  const BaseObject &Base = R.Base;
+  const addrmap::ResolvedPath &Path = R.Path;
   J.object([&] {
     J.attribute("type", "record");
-    J.attribute("id", V.RecordId);
-    J.attribute("function", MF.getName());
-    J.attribute("kind", Kind);
+    J.attribute("id", R.Id);
+    J.attribute("function", R.Function);
+    J.attribute("kind", R.Kind);
     J.attributeObject("insn", [&] {
-      J.attribute("mnemonic", Mnemonic);
-      J.attribute("dest_reg", getRegName(Dest));
+      J.attribute("mnemonic", R.Mnemonic);
+      J.attribute("dest_reg", R.DestReg);
       J.attributeObject("addr", [&] {
-        writeOptionalReg(J, "segment", Addr.Segment);
-        writeOptionalReg(J, "base_reg", Addr.Base);
-        writeOptionalReg(J, "index_reg", Addr.Index);
-        J.attribute("scale", Addr.Scale);
-        J.attribute("disp", Addr.Disp);
-        if (Addr.Sym)
-          J.attribute("symbol", SymbolName);
-        else
-          J.attribute("symbol", nullptr);
-        J.attribute("rip_relative", Addr.Base == X86::RIP);
+        WriteReg("segment", R.Segment);
+        WriteReg("base_reg", R.BaseReg);
+        WriteReg("index_reg", R.IndexReg);
+        J.attribute("scale", R.Scale);
+        J.attribute("disp", R.Disp);
+        writeOptional(J, "symbol", R.Symbol);
+        J.attribute("rip_relative", R.RipRelative);
       });
     });
-    writeSourceLocation(J, MI.getDebugLoc());
-    if (Kind == "not_pointer") {
-      J.attribute("confidence", Confidence);
-      J.attribute("reason", *NotPointerReason);
+    writeSourceLocation(J, R.Loc);
+    if (R.Kind == "not_pointer") {
+      J.attribute("confidence", R.Confidence);
+      writeOptional(J, "reason", R.Reason);
       return;
     }
 
@@ -941,14 +1013,14 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
       else
         J.attribute("decl", nullptr);
     });
-    if (Kind == "derive") {
+    if (R.Kind == "derive") {
       J.attributeObject("src_ptr", [&] {
-        writeOptional(J, "expr", SrcExpr);
-        writeOptional(J, "var", SrcVar);
-        writeOptional(J, "type", SrcType);
+        writeOptional(J, "expr", R.SrcExpr);
+        writeOptional(J, "var", R.SrcVar);
+        writeOptional(J, "type", R.SrcType);
         J.attributeArray("derived_from", [&] {
-          if (DerivedFrom)
-            J.value(*DerivedFrom);
+          if (R.DerivedFrom)
+            J.value(*R.DerivedFrom);
         });
       });
     }
@@ -956,22 +1028,19 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
       for (const addrmap::PathStep &S : Path.Steps)
         writePathStep(J, S);
     });
-    J.attribute("path_str", V.PathStr);
+    J.attribute("path_str", R.PathStr);
     J.attributeObject("ptr_offset", [&] {
-      writeOptional(J, "const", V.ConstOffset);
+      writeOptional(J, "const", R.ConstOffset);
       J.attributeArray("var", [&] {
-        for (const addrmap::VarTerm &T : V.Vars)
+        for (const addrmap::VarTerm &T : R.Vars)
           J.object([&] {
-            if (T.Reg.empty())
-              J.attribute("reg", nullptr);
-            else
-              J.attribute("reg", T.Reg);
+            WriteReg("reg", T.Reg);
             J.attribute("scale", T.Scale);
           });
       });
     });
     J.attribute("byte_offset_in_field", Path.ByteOffsetInField);
-    J.attribute("result_type", V.ResultType);
+    J.attribute("result_type", R.ResultType);
     J.attribute("source_expr", nullptr);
     J.attributeArray("alternatives", [&] {
       for (const addrmap::Alternative &A : Path.Alternatives)
@@ -981,27 +1050,22 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
                                           Path.Steps, A.Steps));
           J.attribute("reason", A.Reason);
         });
-      for (const std::string &Name : SharedSlotVars)
+      for (const std::string &Name : R.SharedSlotVars)
         J.object([&] {
           J.attribute("path_str", Name);
           J.attribute("reason", "shares the stack slot");
         });
     });
-    J.attribute("out_of_bounds", OutOfBounds);
-    J.attribute("confidence", Confidence);
+    J.attribute("out_of_bounds", R.OutOfBounds);
+    J.attribute("confidence", R.Confidence);
     J.attributeArray("provenance", [&] {
-      for (StringRef P : Provenance)
+      for (StringRef P : R.Provenance)
         J.value(P);
     });
-    writeOptional(J, "reason", Reason);
+    if (R.IntermediateOf)
+      J.attribute("intermediate_of", *R.IntermediateOf);
+    writeOptional(J, "reason", R.Reason);
   });
-
-  MCSymbol *Label = AP.OutContext.createTempSymbol("addrmap");
-  AP.OutStreamer->emitLabel(Label);
-  Records.push_back({Label, std::move(Json)});
-  if (Kind == "not_pointer")
-    return std::nullopt;
-  return V;
 }
 
 static StringRef getOptLevelName(CodeGenOptLevel Level) {
@@ -1022,9 +1086,11 @@ void X86AddrMap::emitSection(const Module &M, AsmPrinter &AP) {
   // Record lines. These, together with the target, are the input of the
   // content hash, so the source path does not affect tu_id.
   std::string RecordLines;
+  raw_string_ostream RS(RecordLines);
   for (const Record &R : Records) {
-    RecordLines += R.Json;
-    RecordLines += '\n';
+    json::OStream J(RS);
+    writeRecord(J, R.Data);
+    RS << '\n';
   }
 
   StringRef Target = AP.TM.getTargetTriple().str();
@@ -1103,6 +1169,6 @@ void X86AddrMap::emitSection(const Module &M, AsmPrinter &AP) {
            << " annotated=" << Stats.Annotated
            << " ir_pointer_annotations=" << IRPointers
            << " derive_without_annotation=" << Stats.DeriveWithoutAnnotation
-           << "\n";
+           << " intermediate=" << Stats.Intermediate << "\n";
   }
 }

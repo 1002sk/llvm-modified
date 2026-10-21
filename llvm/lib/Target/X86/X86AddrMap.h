@@ -42,6 +42,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/AddrMapTypes.h"
+#include "llvm/IR/DebugLoc.h"
 #include <optional>
 #include <string>
 
@@ -107,13 +108,50 @@ public:
     std::string ResultType;
   };
 
+  /// One record, kept until the section is emitted because a later
+  /// instruction may tell that it computed an intermediate value.
+  struct RecordData {
+    unsigned Id = 0;
+    std::string Function;
+    StringRef Kind;
+    std::string Mnemonic;
+    std::string DestReg;
+    /// The address expression; empty registers are absent.
+    std::string Segment, BaseReg, IndexReg;
+    unsigned Scale = 1;
+    int64_t Disp = 0;
+    std::optional<std::string> Symbol;
+    bool RipRelative = false;
+    DebugLoc Loc;
+    BaseObject Base;
+    std::optional<std::string> SrcExpr, SrcVar, SrcType;
+    std::optional<unsigned> DerivedFrom;
+    addrmap::ResolvedPath Path;
+    /// The access path was resolved from the type of the base.
+    bool PathResolved = false;
+    std::string PathStr;
+    std::optional<int64_t> ConstOffset;
+    SmallVector<addrmap::VarTerm, 2> Vars;
+    std::string ResultType;
+    SmallVector<std::string, 1> SharedSlotVars;
+    bool OutOfBounds = false;
+    StringRef Confidence;
+    SmallVector<StringRef, 4> Provenance;
+    std::optional<std::string> Reason;
+    /// The record of the pointer this one is a step of the computation of.
+    std::optional<unsigned> IntermediateOf;
+  };
+
 private:
   struct Record {
     MCSymbol *Label;
-    /// The serialized JSON object, without the trailing newline.
-    std::string Json;
+    RecordData Data;
   };
   SmallVector<Record, 0> Records;
+
+  /// Mark the unresolved derive records that \p Final was computed from as
+  /// intermediate values of it.
+  void markIntermediates(const RecordData &Final);
 
   /// Counters for -addrmap-stats.
   struct {
@@ -124,6 +162,8 @@ private:
     /// Pointer arithmetic recorded without an annotation: either computed by
     /// a later machine pass or an annotation lost on the way.
     unsigned DeriveWithoutAnnotation = 0;
+    /// Records found to compute an intermediate value of another one.
+    unsigned Intermediate = 0;
   } Stats;
 
   /// Per-function tracking of the registers that hold the result of a

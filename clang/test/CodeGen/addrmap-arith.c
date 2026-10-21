@@ -1,13 +1,14 @@
 // REQUIRES: x86-registered-target
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -O0 -debug-info-kind=limited \
-// RUN:   -mrelocation-model static -faddrmap -S -o - %s \
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -target-cpu x86-64 -O0 \
+// RUN:   -debug-info-kind=limited -mrelocation-model static -faddrmap -S -o - %s \
 // RUN:   | FileCheck %s --check-prefixes=CHECK,O0
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -O2 -debug-info-kind=limited \
-// RUN:   -mrelocation-model static -faddrmap -S -o - %s \
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -target-cpu x86-64 -O2 \
+// RUN:   -debug-info-kind=limited -mrelocation-model static -faddrmap -S -o - %s \
 // RUN:   | FileCheck %s --check-prefixes=CHECK,O2
-// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -O2 -debug-info-kind=limited \
-// RUN:   -mrelocation-model static -faddrmap -mllvm -addrmap-stats -S \
-// RUN:   -o /dev/null %s 2>&1 | FileCheck %s --check-prefix=STATS
+// RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -target-cpu x86-64 -O2 \
+// RUN:   -debug-info-kind=limited -mrelocation-model static -faddrmap \
+// RUN:   -mllvm -addrmap-stats -S -o /dev/null %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=STATS
 
 // Pointer arithmetic done by ADD/SUB/AND as well as LEA, described with the
 // annotations from the IR.
@@ -28,6 +29,9 @@ void loop(int *b, long n) {
 void *align16(void *p) { return (void *)((uintptr_t)p & ~(uintptr_t)15); }
 int *deref(int **q) { return *q + 2; }
 char *bytes(char *p, long i) { return p + i; }
+struct Item { int id; struct Point pos; };
+struct World { long n; struct Item items[16]; };
+struct Point *item_pos(struct World *p, long i) { return &p->items[i].pos; }
 
 // -O0 computes &g.b.y step by step; each ADD derives from the previous one.
 // O0-LABEL: f1:
@@ -85,4 +89,19 @@ char *bytes(char *p, long i) { return p + i; }
 // CHECK-SAME: \"result_type\":\"char *\"
 // CHECK-SAME: \"confidence\":\"derived\"
 
-// STATS: addrmap-stats: {{.*}}addrmap-arith.c: targets=6 addr=1 addr_got=0 derive=4 mask=1 not_pointer=0 unknown_base=0 annotated=5 ir_pointer_annotations={{[0-9]+}} derive_without_annotation=0
+// &p->items[i].pos is p + 12*i + 12. At -O2, 12*i is (3*i)*4, and the slow
+// three-operand LEA is split by X86FixupLEAs into
+//   leaq (%rdi,%rax,4), %rax   ; p + 12*i, no C expression denotes it
+//   addq $12, %rax             ; p + 12*i + 12, the annotated final value
+// so the first one is recorded as an intermediate value of the second.
+// O2-SAME: \"id\":6,\"function\":\"item_pos\",\"kind\":\"not_pointer\"
+// O2-SAME: \"id\":7,\"function\":\"item_pos\",\"kind\":\"derive\",\"insn\":{\"mnemonic\":\"leaq\"
+// O2-SAME: \"src_ptr\":{\"expr\":\"p\",\"var\":\"p\",\"type\":\"struct World *\",\"derived_from\":[]},\"path\":[],\"path_str\":\"\"
+// O2-SAME: \"confidence\":\"derived\",\"provenance\":[\"machine-operand\",\"debuginfo-variable\",\"intermediate\"],\"intermediate_of\":8,\"reason\":\"intermediate value of p->items[?].pos\"}
+// O2-SAME: \"id\":8,\"function\":\"item_pos\",\"kind\":\"derive\",\"insn\":{\"mnemonic\":\"addq\"
+// O2-SAME: \"derived_from\":[7]
+// O2-SAME: \"path_str\":\"p->items[?].pos\"
+// O0-SAME: \"function\":\"item_pos\",\"kind\":\"derive\"
+// O0-NOT:  \"intermediate_of\"
+
+// STATS: addrmap-stats: {{.*}}addrmap-arith.c: targets=9 addr=1 addr_got=0 derive=6 mask=1 not_pointer=1 unknown_base=0 annotated=6 ir_pointer_annotations={{[0-9]+}} derive_without_annotation=1 intermediate=1
