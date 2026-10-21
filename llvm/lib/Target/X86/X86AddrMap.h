@@ -13,7 +13,8 @@
 // Target instructions are the ones that produce a pointer value:
 //   - every LEA,
 //   - MOVs that materialize a symbol address as an immediate,
-//   - MOVs that load a symbol address from the GOT.
+//   - MOVs that load a symbol address from the GOT,
+//   - MOVs that copy the stack or frame pointer (the address of a local).
 // Each of them gets a temporary label right before it and one JSON record.
 //
 // Layout of one unit (all little endian):
@@ -38,11 +39,17 @@
 #ifndef LLVM_LIB_TARGET_X86_X86ADDRMAP_H
 #define LLVM_LIB_TARGET_X86_X86ADDRMAP_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/CodeGen/AddrMapTypes.h"
+#include <optional>
 #include <string>
 
 namespace llvm {
 class AsmPrinter;
+class DIType;
+class MachineBasicBlock;
+class MachineFunction;
 class MachineInstr;
 class MCSymbol;
 class Module;
@@ -54,13 +61,50 @@ public:
   static constexpr unsigned EntrySize = 16;
 
   /// If \p MI produces a pointer, emit a label right before it and record it.
-  /// Must be called before anything else is emitted for \p MI.
+  /// Must be called before anything else is emitted for \p MI, and for every
+  /// instruction so that the registers holding recorded pointers are tracked.
   void handleInstruction(const MachineInstr &MI, AsmPrinter &AP);
 
   /// Emit the unit for this translation unit into .llvm_addrmap.
   void emitSection(const Module &M, AsmPrinter &AP);
 
-  void reset() { Records.clear(); }
+  void reset() {
+    Records.clear();
+    resetFunction(nullptr);
+  }
+
+  /// The object a pointer points into and how to spell it.
+  struct BaseObject {
+    StringRef Kind = "unknown";
+    std::optional<std::string> Name;
+    /// The type of the object, or the pointee type for "pointee". Only
+    /// meaningful if HasType is set; a null type is void.
+    const DIType *Type = nullptr;
+    bool HasType = false;
+    std::optional<uint64_t> Size;
+    std::optional<uint64_t> TypeSize;
+    std::optional<StringRef> SizeUnknown;
+    std::optional<std::string> Reason;
+    /// Where the object is declared, if known.
+    StringRef DeclFile;
+    unsigned DeclLine = 0;
+    /// The root of the access path, e.g. "g" or "p".
+    std::string RootExpr;
+    /// The origin is the value of a pointer (RootExpr) rather than an object.
+    bool ViaPointer = false;
+  };
+
+  /// What a recorded instruction left in its destination register.
+  struct PointerValue {
+    /// The register holding the pointer; 0 if it is not tracked.
+    unsigned Dest = 0;
+    unsigned RecordId;
+    BaseObject Base;
+    std::optional<int64_t> ConstOffset;
+    SmallVector<addrmap::VarTerm, 2> Vars;
+    std::string PathStr;
+    std::string ResultType;
+  };
 
 private:
   struct Record {
@@ -69,6 +113,20 @@ private:
     std::string Json;
   };
   SmallVector<Record, 0> Records;
+
+  /// Per-function tracking of the registers that hold the result of a
+  /// recorded instruction, for derived_from (R-PTR-3). Only straight-line
+  /// code within a basic block is followed.
+  const MachineFunction *CurMF = nullptr;
+  const MachineBasicBlock *CurMBB = nullptr;
+  SmallVector<PointerValue, 0> Values;
+  DenseMap<unsigned, unsigned> LiveValues;
+
+  void resetFunction(const MachineFunction *MF);
+  std::optional<PointerValue> recordInstruction(const MachineInstr &MI,
+                                                AsmPrinter &AP);
+  void updateLiveValues(const MachineInstr &MI,
+                        std::optional<PointerValue> NewValue);
 };
 
 } // namespace llvm

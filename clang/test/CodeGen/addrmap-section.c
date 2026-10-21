@@ -29,11 +29,12 @@ int *field(struct Point *p) { return &p->y; }
 // CHECK-NEXT: .ascii "AMAP"
 // CHECK:      \"function\":\"get_y\",\"kind\":\"addr\"
 // CHECK-SAME: \"source\":{\"file\":\"{{.*}}addrmap-section.c\",\"line\":13,\"column\":20,\"inlined_at\":[]}
-// CHECK-SAME: \"base\":{\"kind\":\"global\",\"name\":\"g\",\"type\":null,\"type_size\":8,\"object\":{\"size\":8}}
-// CHECK-SAME: \"ptr_offset\":{\"const\":4,\"var\":[]}
+// CHECK-SAME: \"base\":{\"kind\":\"global\",\"name\":\"g\",\"type\":\"struct Point\",\"type_size\":8,\"object\":{\"size\":8},\"decl\":{\"file\":\"{{.*}}addrmap-section.c\",\"line\":10}}
+// CHECK-SAME: \"path_str\":\"g.y\",\"ptr_offset\":{\"const\":4,\"var\":[]}
 // CHECK-SAME: \"function\":\"get_s\",\"kind\":\"addr\"
 // CHECK-SAME: \"base\":{\"kind\":\"static_local\",\"name\":\"t\",
 // CHECK-SAME: \"function\":\"field\",\"kind\":\"derive\"
 // CHECK-SAME: \"base\":{\"kind\":\"pointee\",
+// CHECK-SAME: \"path_str\":\"p->y\"
 
 // NOMAP-NOT: {{Laddrmap|llvm_addrmap}}

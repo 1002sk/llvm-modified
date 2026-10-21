@@ -101,7 +101,7 @@ define void @stack() {
 ; CHECK-SAME:  {\"type\":\"record\",\"id\":0,\"function\":\"addr_global\",\"kind\":\"addr\",
 ; PIC-SAME:    \"insn\":{\"mnemonic\":\"leaq\",\"dest_reg\":\"rax\",\"addr\":{\"segment\":null,\"base_reg\":\"rip\",\"index_reg\":null,\"scale\":1,\"disp\":8,\"symbol\":\"g\",\"rip_relative\":true}},
 ; STATIC-SAME: \"insn\":{\"mnemonic\":\"movl\",\"dest_reg\":\"eax\",\"addr\":{\"segment\":null,\"base_reg\":null,\"index_reg\":null,\"scale\":1,\"disp\":8,\"symbol\":\"g\",\"rip_relative\":false}},
-; CHECK-SAME:  \"base\":{\"kind\":\"global\",\"name\":\"g\",\"type\":null,\"type_size\":16,\"object\":{\"size\":16}},
+; CHECK-SAME:  \"base\":{\"kind\":\"global\",\"name\":\"g\",\"type\":null,\"type_size\":16,\"object\":{\"size\":16},\"decl\":null},
 ; CHECK-SAME:  \"ptr_offset\":{\"const\":8,\"var\":[]},
 ; CHECK-SAME:  \"out_of_bounds\":false,\"confidence\":\"derived\",\"provenance\":[\"machine-operand\"],\"reason\":null}\n
 
@@ -111,25 +111,26 @@ define void @stack() {
 ; CHECK-SAME:  \"base\":{\"kind\":\"global\",\"name\":\"ext\",
 ; CHECK-SAME:  \"path_str\":\"ext\",\"ptr_offset\":{\"const\":0,\"var\":[]},
 
-;; leaq 16(%rdi): pointer derived from another pointer.
+;; leaq 16(%rdi): pointer derived from another pointer. Without debug info the
+;; source pointer is not known, but the offset from it is.
 ; CHECK-SAME:  {\"type\":\"record\",\"id\":2,\"function\":\"derive\",\"kind\":\"derive\",
 ; CHECK-SAME:  \"addr\":{\"segment\":null,\"base_reg\":\"rdi\",\"index_reg\":null,\"scale\":1,\"disp\":16,\"symbol\":null,\"rip_relative\":false}},
-; CHECK-SAME:  \"base\":{\"kind\":\"pointee\",\"name\":null,\"type\":null,\"type_size\":null,\"object\":{\"size\":null,\"size_unknown\":\"pointee\"}},
+; CHECK-SAME:  \"base\":{\"kind\":\"pointee\",\"name\":null,\"type\":null,\"type_size\":null,\"object\":{\"size\":null,\"size_unknown\":\"pointee\"},\"decl\":null},
 ; CHECK-SAME:  \"src_ptr\":{\"expr\":null,\"var\":null,\"type\":null,\"derived_from\":[]},
 ; CHECK-SAME:  \"ptr_offset\":{\"const\":16,\"var\":[]},
-; CHECK-SAME:  \"confidence\":\"heuristic\",
+; CHECK-SAME:  \"confidence\":\"heuristic\",{{.*}}\"reason\":\"source pointer not known\"}\n
 
 ;; leaq (%rdi,%rdi,2): integer arithmetic. Only insn and source are recorded.
 ; CHECK-SAME:  {\"type\":\"record\",\"id\":3,\"function\":\"mul3\",\"kind\":\"not_pointer\",
 ; CHECK-SAME:  \"addr\":{\"segment\":null,\"base_reg\":\"rdi\",\"index_reg\":\"rdi\",\"scale\":2,\"disp\":0,\"symbol\":null,\"rip_relative\":false}},\"source\":null,\"confidence\":\"heuristic\",\"reason\":\"integer arithmetic shape (no base, or base == index)\"}\n
 
-;; leaq 4(%rsp): address of a stack object, which cannot be named yet.
+;; leaq 4(%rsp): address of a stack object. Without debug info there is no
+;; variable to name it.
 ; CHECK-SAME:  {\"type\":\"record\",\"id\":4,\"function\":\"stack\",\"kind\":\"addr\",
 ; CHECK-SAME:  \"base_reg\":\"rsp\",
 ; CHECK-SAME:  \"base\":{\"kind\":\"unknown\",
 ; CHECK-SAME:  \"ptr_offset\":{\"const\":null,\"var\":[]},
-; CHECK-SAME:  \"reason\":\"stack object; frame index already eliminated\"}\n"
-; CHECK-NEXT:  .zero
+; CHECK-SAME:  \"reason\":\"stack object without a variable\"}\n"
 
 ; NOMAP-NOT: {{Laddrmap|llvm_addrmap}}
 

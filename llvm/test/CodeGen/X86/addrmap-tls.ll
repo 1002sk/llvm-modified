@@ -23,7 +23,7 @@ define ptr @tls_local() {
 ; GD-NEXT:    leaq tv@TLSGD(%rip), %rdi
 ; GD:         .quad [[L]]
 ; GD:         \"kind\":\"addr\",\"insn\":{\"mnemonic\":\"leaq\",\"dest_reg\":\"rdi\",\"addr\":{\"segment\":null,\"base_reg\":\"rip\",\"index_reg\":null,\"scale\":1,\"disp\":0,\"symbol\":\"tv\",\"rip_relative\":true}}
-; GD-SAME:    \"base\":{\"kind\":\"tls\",\"name\":\"tv\",\"type\":null,\"type_size\":16,\"object\":{\"size\":16}}
+; GD-SAME:    \"base\":{\"kind\":\"tls\",\"name\":\"tv\",\"type\":null,\"type_size\":16,\"object\":{\"size\":16},\"decl\":null}
 
 ;; Local exec: the base register holds the thread pointer, not an offset.
 ; LE-LABEL: tls_local:
