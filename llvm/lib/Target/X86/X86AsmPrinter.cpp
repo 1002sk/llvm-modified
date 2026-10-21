@@ -894,6 +894,10 @@ bool X86AsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNo,
 void X86AsmPrinter::emitStartOfAsmFile(Module &M) {
   const Triple &TT = TM.getTargetTriple();
 
+  // The addrmap is only supported for x86-64 ELF.
+  EmitAddrMap =
+      TM.Options.EmitAddrMap && TT.isOSBinFormatELF() && TT.isX86_64();
+
   if (TT.isOSBinFormatELF()) {
     // Assemble feature flags that may require creation of a note section.
     unsigned FeatureFlagsAnd = 0;
@@ -1097,6 +1101,8 @@ void X86AsmPrinter::emitEndOfAsmFile(Module &M) {
     }
   } else if (TT.isOSBinFormatELF()) {
     FM.serializeToFaultMapSection();
+    if (EmitAddrMap)
+      AddrMap.emitSection(M, *this);
   }
 
   // Emit __morestack address if needed for indirect calls.

@@ -4648,6 +4648,12 @@ defm stack_size_section : BoolFOption<"stack-size-section",
   PosFlag<SetTrue, [], [ClangOption, CC1Option],
           "Emit section containing metadata on function stack sizes">,
   NegFlag<SetFalse>>;
+defm addrmap : BoolFOption<"addrmap",
+  CodeGenOpts<"AddrMap">, DefaultFalse,
+  PosFlag<SetTrue, [], [ClangOption, CC1Option],
+          "Emit .llvm_addrmap section mapping pointer-producing instructions "
+          "to the objects they point to">,
+  NegFlag<SetFalse>>;
 def frealloc_lhs : Flag<["-"], "frealloc-lhs">, Group<f_Group>,
   Visibility<[FlangOption, FC1Option]>,
   HelpText<"If an allocatable left-hand side of an intrinsic assignment is unallocated or its shape/type does not match the right-hand side, then it is automatically (re)allocated">;

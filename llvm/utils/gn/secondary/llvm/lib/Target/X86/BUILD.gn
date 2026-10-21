@@ -92,6 +92,7 @@ static_library("LLVMX86CodeGen") {
     "GISel/X86LegalizerInfo.cpp",
     "GISel/X86PreLegalizerCombiner.cpp",
     "GISel/X86RegisterBankInfo.cpp",
+    "X86AddrMap.cpp",
     "X86ArgumentStackSlotRebase.cpp",
     "X86AsmPrinter.cpp",
     "X86AvoidStoreForwardingBlocks.cpp",
