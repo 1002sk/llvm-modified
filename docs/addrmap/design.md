@@ -37,6 +37,7 @@ llc -addrmap foo.ll                        # llc から直接使う場合
 ```
 
 - `-faddrmap` / `-fno-addrmap` はドライバと cc1 の両方で受け付ける。
+- 対象は C だけ。C++ や Objective-C の入力に指定するとエラーになる（判断 D14）。
 - 出力するのは x86-64 の ELF だけ。i686 や他の形式では何も出さない。
 - `-g` がないと型情報が取れないので、パスは空になり `confidence` は下がる。
 
@@ -264,6 +265,7 @@ LEA の分類（上から順に判定）:
 | D10 | 注釈パスは旧パスマネージャの CodeGen パイプラインにだけ入れた | Clang の x86 コード生成は旧パスマネージャを使う | 新パスマネージャの `CodeGenPassBuilder` にも追加する（LTO への備え、仕様書 7.2） |
 | D11 | ループで動くポインタは、要素サイズ刻みの可変添字として扱う | 仕様書 8 章の LSR の期待値（`a[?]`）に合わせるため | オフセット不明としてパスを出さない |
 | D12 | `confidence` の使い分けを決めた。`exact` は IR 注釈で整数演算と確定した `not_pointer` に限る。機械語オペランド・DI 情報・IR 注釈から決まったものは `derived` | 仕様書に定義がないため。フロントエンド注釈を実装したら、それ由来のものを `exact` にする予定 | IR 注釈由来もすべて `exact` にする |
+| D14 | `-faddrmap` は C だけで受け付け、C++、Objective-C などでは cc1 でエラーにする（`invalid argument '-faddrmap' not allowed with 'C++'`）。LLVM IR の入力は通す | 仕様書の対象は C だけ。C++ で試したところ、次の不具合があった。<br>・inline 関数などの COMDAT を含むオブジェクトを gold でリンクすると、捨てられたセクションへの参照でエラーになる<br>・基底クラスの部分オブジェクト（`DW_TAG_inheritance`）を扱わず、基底クラスのメンバへのパスが誤る<br>・参照型をポインタとして扱わない<br>IR を通すのは `-save-temps`（C → IR → オブジェクト）を動かすため | C++ に対応する。COMDAT は関数ごとのユニット（`SHF_LINK_ORDER` か COMDAT グループ）にし、継承と参照型を型の解釈に加える |
 | D13 | TLS の initial exec（`movq x@GOTTPOFF(%rip)`）は `addr_got` にしている | GOT を読む命令の形として統一したため | GOT から読むのは TLS オフセットなので、`addr`（`tls`）と後続の `addq %fs:0` などを組み合わせて扱う |
 
 ## 7. 検証
