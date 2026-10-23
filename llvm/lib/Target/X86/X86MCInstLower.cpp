@@ -2640,9 +2640,18 @@ void X86AsmPrinter::emitInstruction(const MachineInstr *MI) {
   EmitAndCountInstruction(TmpInst);
 }
 
+void X86AsmPrinter::emitInlineAsmStart() const {
+  if (MemLockMap.isEnabled())
+    const_cast<X86AsmPrinter *>(this)->MemLockMap.beginInlineAsm(
+        *const_cast<X86AsmPrinter *>(this));
+}
+
 void X86AsmPrinter::emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
                                      const MCSubtargetInfo *EndInfo,
                                      const MachineInstr *MI) {
+  if (MemLockMap.isEnabled())
+    MemLockMap.endInlineAsm(MI, *this);
+
   if (MI) {
     // If unwinding inline asm ends on a call, wineh may require insertion of
     // a nop.

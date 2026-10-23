@@ -178,6 +178,8 @@ public:
 
   void emitInstruction(const MachineInstr *MI) override;
 
+  void emitInlineAsmStart() const override;
+
   void emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
                         const MCSubtargetInfo *EndInfo,
                         const MachineInstr *MI) override;

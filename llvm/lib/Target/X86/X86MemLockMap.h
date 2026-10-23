@@ -26,15 +26,25 @@
 //     uint8    reason       (bit7 set: no lock needed)
 // Offsets and sizes are label differences resolved by the assembler.
 //
-// FIXME: The reason codes are placeholders; the sharing analysis is not
-// implemented yet. Inline assembly and instructions emitted by the MC layer
-// are not listed yet.
+// The memory accesses are the instructions with mayLoadOrStore(), the ones
+// accessing the stack implicitly (PUSH, POP, CALL, RET, LEAVE) and inline
+// assembly (as a range). An instruction needs no lock only if each of its
+// accesses is one of:
+//   A. a local variable (alloca) that is not captured,
+//   B. a stack slot created by the compiler,
+//   C. the stack, accessed implicitly through the stack pointer,
+//   D. a read of the GOT, the constant pool or a jump table.
+// Everything else, including missing information, needs a lock.
+//
+// FIXME: Instructions emitted by the MC layer without a MachineInstr of their
+// own (e.g. the calls in TLS_addr64 and TLS_desc64) are not listed yet.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_LIB_TARGET_X86_X86MEMLOCKMAP_H
 #define LLVM_LIB_TARGET_X86_X86MEMLOCKMAP_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -42,8 +52,11 @@
 #include <cstdint>
 
 namespace llvm {
+class AllocaInst;
 class AsmPrinter;
+class MachineFunction;
 class MachineInstr;
+class MachineMemOperand;
 class MCSymbol;
 
 class X86MemLockMap {
@@ -81,11 +94,28 @@ public:
   /// Must be called before anything else is emitted for \p MI.
   void handleInstruction(const MachineInstr &MI, AsmPrinter &AP);
 
+  /// Emit a label at the start of an inline assembly block.
+  void beginInlineAsm(AsmPrinter &AP);
+
+  /// Record the inline assembly block started by beginInlineAsm() as a range.
+  /// \p MI is null for module level inline assembly.
+  void endInlineAsm(const MachineInstr *MI, AsmPrinter &AP);
+
   /// Emit one record per fragment of the current function. Must be called
   /// after the function body has been emitted.
   void endFunction(AsmPrinter &AP);
 
+  /// Whether \p Opcode accesses the stack through the stack pointer without
+  /// an explicit memory operand (rule C).
+  static bool isImplicitStackAccess(unsigned Opcode);
+
 private:
+  /// The reason code for \p MI, which accesses memory.
+  uint8_t classify(const MachineInstr &MI);
+  uint8_t classifyMemOperand(const MachineMemOperand &MMO,
+                             const MachineFunction &MF);
+  bool isCaptured(const AllocaInst *AI);
+
   struct Entry {
     MCSymbol *Label;
     EntryKind Kind;
@@ -96,6 +126,10 @@ private:
 
   /// Entries of the current function, per fragment.
   MapVector<MBBSectionID, SmallVector<Entry, 16>> Entries;
+  /// Capture results for the allocas of the current function.
+  DenseMap<const AllocaInst *, bool> CaptureCache;
+  /// The start of the inline assembly block being emitted.
+  MCSymbol *InlineAsmBegin = nullptr;
   MemLockMapMode Mode;
 };
 
