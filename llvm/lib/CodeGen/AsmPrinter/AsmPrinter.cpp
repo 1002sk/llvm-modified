@@ -497,6 +497,13 @@ bool AsmPrinter::doInitialization(Module &M) {
   DbgInfoAvailable = !M.debug_compile_units().empty();
   const Triple &Target = TM.getTargetTriple();
 
+  // The memlock map is only implemented for x86-64 Linux ELF.
+  if (TM.Options.MemLockMap != MemLockMapMode::None &&
+      !(Target.isX86_64() && !Target.isX32() && Target.isOSLinux() &&
+        Target.isOSBinFormatELF()))
+    M.getContext().emitError("-memlock-map is not supported for target '" +
+                             Target.str() + "'");
+
   AddrLabelSymbols = nullptr;
 
   // Initialize TargetLoweringObjectFile.

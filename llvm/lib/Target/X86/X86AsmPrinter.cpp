@@ -901,8 +901,8 @@ void X86AsmPrinter::emitStartOfAsmFile(Module &M) {
   EmitAddrMap =
       TM.Options.EmitAddrMap && TT.isOSBinFormatELF() && TT.isX86_64();
 
-  // So is the memlock map.
-  // FIXME: Diagnose other targets instead of ignoring the option.
+  // So is the memlock map; AsmPrinter::doInitialization() diagnoses the other
+  // targets.
   MemLockMap.setMode(TT.isOSBinFormatELF() && TT.isX86_64()
                          ? TM.Options.MemLockMap
                          : MemLockMapMode::None);

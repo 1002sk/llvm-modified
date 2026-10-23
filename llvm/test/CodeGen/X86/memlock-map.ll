@@ -18,9 +18,17 @@
 ; RUN: llvm-objcopy -O binary --only-section=.text %t.all.o %t.all.bin
 ; RUN: cmp %t.none.bin %t.all.bin
 
-;; The map is only emitted for x86-64 ELF.
-; RUN: llc < %s -mtriple=i686-unknown-linux-gnu -memlock-map=all \
-; RUN:   | FileCheck %s --check-prefix=NOMAP
+;; The map is only supported for x86-64 Linux ELF.
+; RUN: not llc < %s -mtriple=i686-unknown-linux-gnu -memlock-map=all \
+; RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET -DTRIPLE=i686-unknown-linux-gnu
+; RUN: not llc < %s -mtriple=x86_64-unknown-linux-gnux32 -memlock-map=all \
+; RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET -DTRIPLE=x86_64-unknown-linux-gnux32
+; RUN: not llc < %s -mtriple=x86_64-unknown-freebsd -memlock-map=all \
+; RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET -DTRIPLE=x86_64-unknown-freebsd
+; RUN: not llc < %s -mtriple=x86_64-pc-windows-msvc -memlock-map=all \
+; RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=TARGET -DTRIPLE=x86_64-pc-windows-msvc
+
+; TARGET: error: -memlock-map is not supported for target '[[TRIPLE]]'
 
 ; NOMAP-NOT: memlock
 
