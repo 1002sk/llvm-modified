@@ -10,6 +10,7 @@
 #define LLVM_LIB_TARGET_X86_X86ASMPRINTER_H
 
 #include "X86AddrMap.h"
+#include "X86MemLockMap.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/FaultMaps.h"
 #include "llvm/CodeGen/StackMaps.h"
@@ -34,6 +35,7 @@ private:
   FaultMaps FM;
   X86AddrMap AddrMap;
   bool EmitAddrMap = false;
+  X86MemLockMap MemLockMap;
   std::unique_ptr<MCCodeEmitter> CodeEmitter;
   bool EmitFPOData = false;
   bool ShouldEmitWeakSwiftAsyncExtendedFramePointerFlags = false;

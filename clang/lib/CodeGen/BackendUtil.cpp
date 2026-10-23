@@ -454,6 +454,7 @@ static bool initTargetOptions(const CompilerInstance &CI,
   Options.DebuggerTuning = CodeGenOpts.getDebuggerTuning();
   Options.EmitStackSizeSection = CodeGenOpts.StackSizeSection;
   Options.EmitAddrMap = CodeGenOpts.AddrMap;
+  Options.MemLockMap = CodeGenOpts.getMemLockMap();
   Options.StackUsageOutput = CodeGenOpts.StackUsageOutput;
   Options.EmitAddrsig = CodeGenOpts.Addrsig;
   Options.ForceDwarfFrameSection = CodeGenOpts.ForceDwarfFrameSection;

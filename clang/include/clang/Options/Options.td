@@ -4654,6 +4654,22 @@ defm addrmap : BoolFOption<"addrmap",
           "Emit .llvm_addrmap section mapping pointer-producing instructions "
           "to the objects they point to">,
   NegFlag<SetFalse>>;
+def fmemlock_map_EQ : Joined<["-"], "fmemlock-map=">, Group<f_Group>,
+  Visibility<[ClangOption, CC1Option]>, MetaVarName<"<mode>">,
+  HelpText<"Emit .memlock_map section listing the memory accesses that need "
+           "a lock (lock), or every memory access with its reason (all)">,
+  Values<"none,lock,all">,
+  NormalizedValuesScope<"llvm::MemLockMapMode">,
+  NormalizedValues<["None", "Lock", "All"]>,
+  MarshallingInfoEnum<CodeGenOpts<"MemLockMap">, "None">;
+def fmemlock_map : Flag<["-"], "fmemlock-map">, Group<f_Group>,
+  Visibility<[ClangOption, CC1Option]>, Alias<fmemlock_map_EQ>,
+  AliasArgs<["lock"]>,
+  HelpText<"Emit .memlock_map section listing the memory accesses that need "
+           "a lock">;
+def fno_memlock_map : Flag<["-"], "fno-memlock-map">, Group<f_Group>,
+  Visibility<[ClangOption, CC1Option]>, Alias<fmemlock_map_EQ>,
+  AliasArgs<["none"]>;
 def frealloc_lhs : Flag<["-"], "frealloc-lhs">, Group<f_Group>,
   Visibility<[FlangOption, FC1Option]>,
   HelpText<"If an allocatable left-hand side of an intrinsic assignment is unallocated or its shape/type does not match the right-hand side, then it is automatically (re)allocated">;

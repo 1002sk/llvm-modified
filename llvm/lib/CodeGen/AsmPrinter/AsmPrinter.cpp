@@ -3073,7 +3073,8 @@ void AsmPrinter::SetupMachineFunction(MachineFunction &MF) {
       needFuncLabels(MF, *this) || NeedsLocalForSize ||
       MF.getTarget().Options.EmitStackSizeSection ||
       MF.getTarget().Options.EmitCallGraphSection ||
-      MF.getTarget().Options.BBAddrMap) {
+      MF.getTarget().Options.BBAddrMap ||
+      MF.getTarget().Options.MemLockMap != MemLockMapMode::None) {
     CurrentFnBegin = createTempSymbol("func_begin");
     if (NeedsLocalForSize)
       CurrentFnSymForSize = CurrentFnBegin;

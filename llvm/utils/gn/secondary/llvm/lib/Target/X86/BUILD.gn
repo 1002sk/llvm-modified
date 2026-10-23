@@ -133,6 +133,7 @@ static_library("LLVMX86CodeGen") {
     "X86LowerAMXType.cpp",
     "X86LowerTileCopy.cpp",
     "X86MCInstLower.cpp",
+    "X86MemLockMap.cpp",
     "X86MachineFunctionInfo.cpp",
     "X86MacroFusion.cpp",
     "X86OptimizeLEAs.cpp",

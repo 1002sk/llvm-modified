@@ -95,6 +95,9 @@ bool X86AsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   // Emit the rest of the function body.
   emitFunctionBody();
 
+  if (MemLockMap.isEnabled())
+    MemLockMap.endFunction(*this);
+
   // Emit the XRay table for this function.
   emitXRayTable();
 
@@ -897,6 +900,12 @@ void X86AsmPrinter::emitStartOfAsmFile(Module &M) {
   // The addrmap is only supported for x86-64 ELF.
   EmitAddrMap =
       TM.Options.EmitAddrMap && TT.isOSBinFormatELF() && TT.isX86_64();
+
+  // So is the memlock map.
+  // FIXME: Diagnose other targets instead of ignoring the option.
+  MemLockMap.setMode(TT.isOSBinFormatELF() && TT.isX86_64()
+                         ? TM.Options.MemLockMap
+                         : MemLockMapMode::None);
 
   if (TT.isOSBinFormatELF()) {
     // Assemble feature flags that may require creation of a note section.

@@ -6516,6 +6516,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.addOptInFlag(CmdArgs, options::OPT_fstack_size_section,
                     options::OPT_fno_stack_size_section);
   Args.addOptInFlag(CmdArgs, options::OPT_faddrmap, options::OPT_fno_addrmap);
+  if (const Arg *A = Args.getLastArg(options::OPT_fmemlock_map_EQ))
+    if (StringRef(A->getValue()) != "none")
+      CmdArgs.push_back(
+          Args.MakeArgString(Twine("-fmemlock-map=") + A->getValue()));
 
   if (Args.hasArg(options::OPT_fstack_usage)) {
     CmdArgs.push_back("-stack-usage-file");

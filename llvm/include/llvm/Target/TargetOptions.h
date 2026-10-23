@@ -65,6 +65,13 @@ enum class BasicBlockSection {
   None    // Do not use Basic Block Sections.
 };
 
+/// What the .memlock_map section lists.
+enum class MemLockMapMode {
+  None, // Do not emit .memlock_map.
+  Lock, // List the memory accesses that need a lock.
+  All   // List every memory access together with its reason code.
+};
+
 /// Identify a debugger for "tuning" the debug info.
 ///
 /// The "debugger tuning" concept allows us to present a more intuitive
@@ -306,6 +313,10 @@ public:
 
   /// Emit basic blocks into separate sections.
   BasicBlockSection BBSections = BasicBlockSection::None;
+
+  /// Emit the .memlock_map section listing the memory accesses that may touch
+  /// memory shared between threads.
+  MemLockMapMode MemLockMap = MemLockMapMode::None;
 
   /// Memory Buffer that contains information on sampled basic blocks and used
   /// to selectively generate basic block sections.

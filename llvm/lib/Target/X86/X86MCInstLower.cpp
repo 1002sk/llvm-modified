@@ -2238,6 +2238,8 @@ void X86AsmPrinter::emitInstruction(const MachineInstr *MI) {
   // for MI, including comments.
   if (EmitAddrMap)
     AddrMap.handleInstruction(*MI, *this);
+  if (MemLockMap.isEnabled())
+    MemLockMap.handleInstruction(*MI, *this);
 
   X86MCInstLower MCInstLowering(*MF, *this);
   const X86RegisterInfo *RI =

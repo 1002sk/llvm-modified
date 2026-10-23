@@ -117,6 +117,8 @@ CODEGENOPT(XRayInstrumentFunctions , 1, 0, Benign) ///< Set when -fxray-instrume
                                                    ///< enabled.
 CODEGENOPT(StackSizeSection  , 1, 0, Benign) ///< Set when -fstack-size-section is enabled.
 CODEGENOPT(AddrMap           , 1, 0, Benign) ///< Set when -faddrmap is enabled.
+ENUM_CODEGENOPT(MemLockMap, MemLockMapMode, 2,
+                llvm::MemLockMapMode::None, Benign) ///< -fmemlock-map=
 
 ///< Set when -femit-compact-unwind-non-canonical is enabled.
 CODEGENOPT(EmitCompactUnwindNonCanonical, 1, 0, Benign)
