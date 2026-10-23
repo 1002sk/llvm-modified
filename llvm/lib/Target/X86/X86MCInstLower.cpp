@@ -138,6 +138,8 @@ void X86AsmPrinter::StackMapShadowTracker::emitShadowPadding(
 }
 
 void X86AsmPrinter::EmitAndCountInstruction(MCInst &Inst) {
+  if (MemLockMap.isEnabled())
+    MemLockMap.handleMCInst(Inst, *this);
   OutStreamer->emitInstruction(Inst, getSubtargetInfo());
   SMShadowTracker.count(Inst, getSubtargetInfo(), CodeEmitter.get());
 }
@@ -833,6 +835,8 @@ void X86AsmPrinter::LowerSTATEPOINT(const MachineInstr &MI,
     MCInst CallInst;
     CallInst.setOpcode(CallOpcode);
     CallInst.addOperand(CallTargetMCOp);
+    if (MemLockMap.isEnabled())
+      MemLockMap.handleMCInst(CallInst, *this);
     OutStreamer->emitInstruction(CallInst, getSubtargetInfo());
     maybeEmitNopAfterCallForWindowsEH(&MI);
   }
@@ -878,6 +882,8 @@ void X86AsmPrinter::LowerFAULTING_OP(const MachineInstr &FaultingMI,
       MI.addOperand(Op);
 
   OutStreamer->AddComment("on-fault: " + HandlerLabel->getName());
+  if (MemLockMap.isEnabled())
+    MemLockMap.handleMCInst(MI, *this);
   OutStreamer->emitInstruction(MI, getSubtargetInfo());
 }
 
@@ -1363,6 +1369,8 @@ void X86AsmPrinter::LowerPATCHABLE_RET(const MachineInstr &MI,
   for (auto &MO : drop_begin(MI.operands()))
     if (auto Op = MCIL.LowerMachineOperand(&MI, MO); Op.isValid())
       Ret.addOperand(Op);
+  if (MemLockMap.isEnabled())
+    MemLockMap.handleMCInst(Ret, *this);
   OutStreamer->emitInstruction(Ret, getSubtargetInfo());
   emitX86Nops(*OutStreamer, 10, Subtarget);
   recordSled(CurSled, MI, SledKind::FUNCTION_EXIT, 2);
@@ -1426,6 +1434,8 @@ void X86AsmPrinter::LowerPATCHABLE_TAIL_CALL(const MachineInstr &MI,
   for (auto &MO : TCOperands)
     if (auto Op = MCIL.LowerMachineOperand(&MI, MO); Op.isValid())
       TC.addOperand(Op);
+  if (MemLockMap.isEnabled())
+    MemLockMap.handleMCInst(TC, *this);
   OutStreamer->emitInstruction(TC, getSubtargetInfo());
 
   if (IsConditional)
@@ -2628,8 +2638,12 @@ void X86AsmPrinter::emitInstruction(const MachineInstr *MI) {
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);
 
+  // The memlock map classifies this MCInst by MI.
+  MemLockMap.setDirect(true);
+
   if (MI->isCall()) {
     emitCallInstruction(TmpInst);
+    MemLockMap.setDirect(false);
     // Since tail calls transfer control without leaving a stack frame, there is
     // never a need for NOP padding tail calls.
     if (!IsTailJump)
@@ -2638,6 +2652,7 @@ void X86AsmPrinter::emitInstruction(const MachineInstr *MI) {
   }
 
   EmitAndCountInstruction(TmpInst);
+  MemLockMap.setDirect(false);
 }
 
 void X86AsmPrinter::emitInlineAsmStart() const {
@@ -2673,6 +2688,8 @@ void X86AsmPrinter::emitCallInstruction(const llvm::MCInst &MCI) {
   // after it.
   SMShadowTracker.emitShadowPadding(*OutStreamer, getSubtargetInfo());
   // Then emit the call
+  if (MemLockMap.isEnabled())
+    MemLockMap.handleMCInst(MCI, *this);
   OutStreamer->emitInstruction(MCI, getSubtargetInfo());
 }
 

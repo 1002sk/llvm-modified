@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86MemLockMap.h"
+#include "MCTargetDesc/X86BaseInfo.h"
+#include "MCTargetDesc/X86MCAsmInfo.h"
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "X86InstrInfo.h"
 #include "llvm/Analysis/CaptureTracking.h"
@@ -20,9 +22,13 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbolELF.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
 
@@ -159,15 +165,57 @@ uint8_t X86MemLockMap::classify(const MachineInstr &MI) {
 }
 
 void X86MemLockMap::handleInstruction(const MachineInstr &MI, AsmPrinter &AP) {
-  if (!MI.mayLoadOrStore() && !isImplicitStackAccess(MI.getOpcode()))
+  CurMI = &MI;
+  CurReason.reset();
+  PrefixLabel = nullptr;
+  if (MI.mayLoadOrStore() || isImplicitStackAccess(MI.getOpcode()))
+    CurReason = classify(MI);
+}
+
+/// Whether \p Inst is the TLSDESC call, which reads a descriptor that may be
+/// resolved lazily.
+static bool isTLSDescCall(const MCInst &Inst) {
+  for (const MCOperand &Op : Inst)
+    if (Op.isExpr())
+      if (const auto *SRE = dyn_cast<MCSymbolRefExpr>(Op.getExpr()))
+        if (SRE->getSpecifier() == X86::S_TLSCALL)
+          return true;
+  return false;
+}
+
+void X86MemLockMap::handleMCInst(const MCInst &Inst, AsmPrinter &AP) {
+  // Code outside function bodies (e.g. the ASan check functions emitted at the
+  // end of the file) has no record, so a lock is taken for all of it.
+  if (!CurMI)
     return;
-  uint8_t R = classify(MI);
-  if (Mode != MemLockMapMode::All && !needsLock(R))
+  const MCInstrDesc &Desc = AP.TM.getMCInstrInfo()->get(Inst.getOpcode());
+  // The offset of an instruction includes its prefixes, so the label goes in
+  // front of the first one.
+  if (X86II::isPrefix(Desc.TSFlags)) {
+    if (!PrefixLabel) {
+      PrefixLabel = AP.OutContext.createTempSymbol("memlock");
+      AP.OutStreamer->emitLabel(PrefixLabel);
+    }
     return;
-  MCSymbol *Label = AP.OutContext.createTempSymbol("memlock");
-  AP.OutStreamer->emitLabel(Label);
-  Entries[MI.getParent()->getSectionID()].push_back(
-      {Label, KindInstruction, nullptr, R});
+  }
+  MCSymbol *Label = std::exchange(PrefixLabel, nullptr);
+
+  std::optional<uint8_t> R;
+  if (Direct && CurReason)
+    // Listed even if the MCInst does not seem to access memory.
+    R = std::exchange(CurReason, std::nullopt);
+  else if (Desc.mayLoad() || Desc.mayStore() ||
+           isImplicitStackAccess(Inst.getOpcode()))
+    R = isTLSDescCall(Inst) ? Unexpected : MCLayer;
+  if (!R || (Mode != MemLockMapMode::All && !needsLock(*R)))
+    return;
+
+  if (!Label) {
+    Label = AP.OutContext.createTempSymbol("memlock");
+    AP.OutStreamer->emitLabel(Label);
+  }
+  Entries[CurMI->getParent()->getSectionID()].push_back(
+      {Label, KindInstruction, nullptr, *R});
 }
 
 void X86MemLockMap::beginInlineAsm(AsmPrinter &AP) {
@@ -225,4 +273,7 @@ void X86MemLockMap::endFunction(AsmPrinter &AP) {
   OS.popSection();
   Entries.clear();
   CaptureCache.clear();
+  CurMI = nullptr;
+  CurReason.reset();
+  PrefixLabel = nullptr;
 }

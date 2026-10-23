@@ -49,14 +49,18 @@ def read(path):
         elf = ELFFile(f)
         relocatable = elf["e_type"] == "ET_REL"
         rh = RelocationHandler(elf) if relocatable else None
-        for sec in elf.iter_sections():
+        # .memlock_map はテキストセクションごとにあり名前が同じなので、
+        # 再配置セクションは名前ではなく sh_info（適用先の番号）で対応づける
+        relsecs = {s["sh_info"]: s for s in elf.iter_sections()
+                   if s["sh_type"] in ("SHT_RELA", "SHT_REL")}
+        for idx, sec in enumerate(elf.iter_sections()):
             if sec.name != SECTION:
                 continue
             data = sec.data()
             text = elf.get_section(sec["sh_link"]).name if sec["sh_link"] else "?"
             if relocatable:   # .o: 再配置を適用し、base を「リンク先セクション内オフセット」にする
                 stream = io.BytesIO(bytearray(data))
-                rels = rh.find_relocations_for_section(sec)
+                rels = relsecs.get(idx)
                 if rels is not None:
                     rh.apply_section_relocations(stream, rels)
                 data = stream.getvalue()

@@ -26,18 +26,24 @@
 //     uint8    reason       (bit7 set: no lock needed)
 // Offsets and sizes are label differences resolved by the assembler.
 //
+// The labels are emitted per MCInst, right before the AsmPrinter emits it (or
+// before the prefixes emitted as separate MCInsts in front of it), so that
+// the instructions emitted for a MachineInstr by custom lowering are listed
+// too.
+//
 // The memory accesses are the instructions with mayLoadOrStore(), the ones
 // accessing the stack implicitly (PUSH, POP, CALL, RET, LEAVE) and inline
-// assembly (as a range). An instruction needs no lock only if each of its
-// accesses is one of:
+// assembly (as a range). The MCInst lowered from a MachineInstr in the usual
+// way is classified by the MachineInstr; an instruction needs no lock only if
+// each of its accesses is one of:
 //   A. a local variable (alloca) that is not captured,
 //   B. a stack slot created by the compiler,
 //   C. the stack, accessed implicitly through the stack pointer,
 //   D. a read of the GOT, the constant pool or a jump table.
-// Everything else, including missing information, needs a lock.
-//
-// FIXME: Instructions emitted by the MC layer without a MachineInstr of their
-// own (e.g. the calls in TLS_addr64 and TLS_desc64) are not listed yet.
+// Everything else, including missing information, needs a lock. The memory
+// accesses among the other MCInsts (custom lowering such as TLS_addr64, XRay
+// sleds, KCFI checks, FAULTING_OP, STATEPOINT) need a lock (0x07, or 0x09 for
+// the TLSDESC call).
 //
 //===----------------------------------------------------------------------===//
 
@@ -50,6 +56,7 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/Target/TargetOptions.h"
 #include <cstdint>
+#include <optional>
 
 namespace llvm {
 class AllocaInst;
@@ -57,6 +64,7 @@ class AsmPrinter;
 class MachineFunction;
 class MachineInstr;
 class MachineMemOperand;
+class MCInst;
 class MCSymbol;
 
 class X86MemLockMap {
@@ -90,9 +98,18 @@ public:
   void setMode(MemLockMapMode M) { Mode = M; }
   bool isEnabled() const { return Mode != MemLockMapMode::None; }
 
-  /// If \p MI accesses memory, emit a label right before it and record it.
-  /// Must be called before anything else is emitted for \p MI.
+  /// Start emitting \p MI. Must be called before any MCInst is emitted for
+  /// \p MI.
   void handleInstruction(const MachineInstr &MI, AsmPrinter &AP);
+
+  /// If \p Inst accesses memory, emit a label for it and record it. Must be
+  /// called right before \p Inst is emitted, for every MCInst emitted by the
+  /// AsmPrinter except nops.
+  void handleMCInst(const MCInst &Inst, AsmPrinter &AP);
+
+  /// Set while the MCInst lowered from the current MachineInstr in the usual
+  /// way is emitted. That one is classified by the MachineInstr.
+  void setDirect(bool D) { Direct = D; }
 
   /// Emit a label at the start of an inline assembly block.
   void beginInlineAsm(AsmPrinter &AP);
@@ -130,6 +147,14 @@ private:
   DenseMap<const AllocaInst *, bool> CaptureCache;
   /// The start of the inline assembly block being emitted.
   MCSymbol *InlineAsmBegin = nullptr;
+  /// The last MachineInstr of the current function, if any.
+  const MachineInstr *CurMI = nullptr;
+  /// The reason code of CurMI, if it accesses memory and its own MCInst has
+  /// not been emitted yet.
+  std::optional<uint8_t> CurReason;
+  /// The label in front of the prefixes emitted so far for the next MCInst.
+  MCSymbol *PrefixLabel = nullptr;
+  bool Direct = false;
   MemLockMapMode Mode;
 };
 
