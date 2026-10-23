@@ -96,6 +96,15 @@ MCSubtargetInfo *createX86MCSubtargetInfo(const Triple &TT, StringRef CPU,
 void emitInstruction(MCObjectStreamer &, const MCInst &Inst,
                      const MCSubtargetInfo &STI);
 
+/// The kinds of instructions (X86::AlignBranchBoundaryKind) in front of which
+/// the assembler may insert nops to align branches, according to the command
+/// line options. AlignBranchNone if it does not align branches.
+uint8_t getAlignedBranchKinds();
+
+/// Whether the assembler treats \p Inst as the first instruction of a
+/// macro-fusible pair.
+bool isFirstMacroFusibleInst(const MCInst &Inst, const MCInstrInfo &MCII);
+
 void emitPrefix(MCCodeEmitter &MCE, const MCInst &MI, SmallVectorImpl<char> &CB,
                 const MCSubtargetInfo &STI);
 }

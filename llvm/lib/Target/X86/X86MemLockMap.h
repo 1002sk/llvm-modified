@@ -45,11 +45,17 @@
 // sleds, KCFI checks, FAULTING_OP, STATEPOINT) need a lock (0x07, or 0x09 for
 // the TLSDESC call).
 //
+// When the assembler aligns branches with nops (-mbranches-within-32B-
+// boundaries, -x86-align-branch*), the nops go between the label and the
+// instruction. A function with a memory access that may be padded this way
+// gets no record at all, so that a lock is taken for all of it.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_LIB_TARGET_X86_X86MEMLOCKMAP_H
 #define LLVM_LIB_TARGET_X86_X86MEMLOCKMAP_H
 
+#include "MCTargetDesc/X86MCTargetDesc.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -65,6 +71,8 @@ class MachineFunction;
 class MachineInstr;
 class MachineMemOperand;
 class MCInst;
+class MCInstrDesc;
+class MCInstrInfo;
 class MCSymbol;
 
 class X86MemLockMap {
@@ -95,7 +103,10 @@ public:
   explicit X86MemLockMap(MemLockMapMode Mode = MemLockMapMode::None)
       : Mode(Mode) {}
 
-  void setMode(MemLockMapMode M) { Mode = M; }
+  void setMode(MemLockMapMode M) {
+    Mode = M;
+    AlignedBranchKinds = X86_MC::getAlignedBranchKinds();
+  }
   bool isEnabled() const { return Mode != MemLockMapMode::None; }
 
   /// Start emitting \p MI. Must be called before any MCInst is emitted for
@@ -132,6 +143,9 @@ private:
   uint8_t classifyMemOperand(const MachineMemOperand &MMO,
                              const MachineFunction &MF);
   bool isCaptured(const AllocaInst *AI);
+  /// Whether the assembler may insert nops in front of the instruction.
+  bool mayBePadded(const MCInst &Inst, const MCInstrDesc &Desc,
+                   const MCInstrInfo &MCII) const;
 
   struct Entry {
     MCSymbol *Label;
@@ -155,6 +169,11 @@ private:
   /// The label in front of the prefixes emitted so far for the next MCInst.
   MCSymbol *PrefixLabel = nullptr;
   bool Direct = false;
+  /// The kinds of branches the assembler aligns with nops.
+  uint8_t AlignedBranchKinds = 0;
+  /// Whether a label of the current function may not point to the start of
+  /// its instruction.
+  bool DropFunction = false;
   MemLockMapMode Mode;
 };
 

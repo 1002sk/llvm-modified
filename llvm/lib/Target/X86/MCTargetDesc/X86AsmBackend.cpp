@@ -266,8 +266,8 @@ static bool isPrefix(unsigned Opcode, const MCInstrInfo &MCII) {
 }
 
 /// Check if the instruction is valid as the first instruction in macro fusion.
-static bool isFirstMacroFusibleInst(const MCInst &Inst,
-                                    const MCInstrInfo &MCII) {
+bool X86_MC::isFirstMacroFusibleInst(const MCInst &Inst,
+                                     const MCInstrInfo &MCII) {
   // An Intel instruction with RIP relative addressing is not macro fusible.
   if (isRIPRelative(Inst, MCII))
     return false;
@@ -344,7 +344,7 @@ bool X86AsmBackend::isMacroFused(const MCInst &Cmp, const MCInst &Jcc) const {
   const MCInstrDesc &InstDesc = MCII->get(Jcc.getOpcode());
   if (!InstDesc.isConditionalBranch())
     return false;
-  if (!isFirstMacroFusibleInst(Cmp, *MCII))
+  if (!X86_MC::isFirstMacroFusibleInst(Cmp, *MCII))
     return false;
   const X86::FirstMacroFusionInstKind CmpKind =
       X86::classifyFirstOpcodeInMacroFusion(Cmp.getOpcode());
@@ -449,6 +449,23 @@ bool X86AsmBackend::needAlign(const MCInst &Inst) const {
           (AlignBranchType & X86::AlignBranchIndirect));
 }
 
+uint8_t X86_MC::getAlignedBranchKinds() {
+  // Keep in sync with the X86AsmBackend constructor.
+  Align Boundary;
+  X86AlignBranchKind Kinds;
+  if (X86AlignBranchWithin32BBoundaries) {
+    Boundary = assumeAligned(32);
+    Kinds.addKind(X86::AlignBranchFused);
+    Kinds.addKind(X86::AlignBranchJcc);
+    Kinds.addKind(X86::AlignBranchJmp);
+  }
+  if (X86AlignBranchBoundary.getNumOccurrences())
+    Boundary = assumeAligned(X86AlignBranchBoundary);
+  if (X86AlignBranch.getNumOccurrences())
+    Kinds = X86AlignBranchKindLoc;
+  return Boundary != Align(1) ? uint8_t(Kinds) : uint8_t(X86::AlignBranchNone);
+}
+
 void X86_MC::emitInstruction(MCObjectStreamer &S, const MCInst &Inst,
                              const MCSubtargetInfo &STI) {
   bool AutoPadding = S.getAllowAutoPadding();
@@ -517,7 +534,7 @@ void X86AsmBackend::emitInstructionBegin(MCObjectStreamer &OS,
   }
 
   if (needAlign(Inst) || ((AlignBranchType & X86::AlignBranchFused) &&
-                          isFirstMacroFusibleInst(Inst, *MCII))) {
+                          X86_MC::isFirstMacroFusibleInst(Inst, *MCII))) {
     // If we meet a unfused branch or the first instuction in a fusiable pair,
     // insert a BoundaryAlign fragment.
     PendingBA =

@@ -183,6 +183,22 @@ static bool isTLSDescCall(const MCInst &Inst) {
   return false;
 }
 
+bool X86MemLockMap::mayBePadded(const MCInst &Inst, const MCInstrDesc &Desc,
+                                const MCInstrInfo &MCII) const {
+  // Keep in sync with X86AsmBackend::emitInstructionBegin(). Prefixes added
+  // for padding are part of the instruction, so only the nops matter, which
+  // go in front of an aligned branch or of the first instruction of a fused
+  // pair.
+  uint8_t K = AlignedBranchKinds;
+  return ((K & X86::AlignBranchJcc) && Desc.isConditionalBranch()) ||
+         ((K & X86::AlignBranchJmp) && Desc.isUnconditionalBranch()) ||
+         ((K & X86::AlignBranchCall) && Desc.isCall()) ||
+         ((K & X86::AlignBranchRet) && Desc.isReturn()) ||
+         ((K & X86::AlignBranchIndirect) && Desc.isIndirectBranch()) ||
+         ((K & X86::AlignBranchFused) &&
+          X86_MC::isFirstMacroFusibleInst(Inst, MCII));
+}
+
 void X86MemLockMap::handleMCInst(const MCInst &Inst, AsmPrinter &AP) {
   // Code outside function bodies (e.g. the ASan check functions emitted at the
   // end of the file) has no record, so a lock is taken for all of it.
@@ -207,7 +223,14 @@ void X86MemLockMap::handleMCInst(const MCInst &Inst, AsmPrinter &AP) {
   else if (Desc.mayLoad() || Desc.mayStore() ||
            isImplicitStackAccess(Inst.getOpcode()))
     R = isTLSDescCall(Inst) ? Unexpected : MCLayer;
-  if (!R || (Mode != MemLockMapMode::All && !needsLock(*R)))
+  if (!R)
+    return;
+  // The assembler may insert nops between the label and the instruction. Drop
+  // the records of the function then, so that a lock is taken for all of it.
+  // This does not depend on the mode, so both modes list the same accesses.
+  if (mayBePadded(Inst, Desc, *AP.TM.getMCInstrInfo()))
+    DropFunction = true;
+  if (Mode != MemLockMapMode::All && !needsLock(*R))
     return;
 
   if (!Label) {
@@ -248,6 +271,8 @@ void X86MemLockMap::endFunction(AsmPrinter &AP) {
   OS.pushSection();
   // A record for every fragment, also those without memory accesses.
   for (const auto &[ID, Range] : AP.MBBSectionRanges) {
+    if (DropFunction)
+      break;
     MCSymbol *Begin = Range.BeginLabel;
     OS.switchSection(
         getMemLockMapSection(AP.OutContext, Begin->getSection()));
@@ -276,4 +301,5 @@ void X86MemLockMap::endFunction(AsmPrinter &AP) {
   CurMI = nullptr;
   CurReason.reset();
   PrefixLabel = nullptr;
+  DropFunction = false;
 }
