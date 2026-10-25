@@ -131,6 +131,8 @@ LLVM_ABI bool getEnableStackSizeSection();
 
 LLVM_ABI bool getEnableAddrMap();
 
+LLVM_ABI MemLockMapMode getMemLockMap();
+
 LLVM_ABI bool getEnableAddrsig();
 
 LLVM_ABI bool getEnableCallGraphSection();

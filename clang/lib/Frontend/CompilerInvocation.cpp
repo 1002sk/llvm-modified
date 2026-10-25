@@ -642,6 +642,19 @@ static bool FixupInvocation(CompilerInvocation &Invocation,
     Diags.Report(diag::err_drv_argument_not_allowed_with)
         << "-faddrmap" << GetInputKindName(IK);
 
+  // The memlock map is only implemented for C on x86-64 Linux ELF. LLVM IR is
+  // accepted so that -save-temps works for C.
+  if (CodeGenOpts.getMemLockMap() != llvm::MemLockMapMode::None) {
+    llvm::Triple T(TargetOpts.Triple);
+    if (!T.isX86_64() || T.isX32() || !T.isOSLinux() || !T.isOSBinFormatELF())
+      Diags.Report(diag::err_drv_unsupported_opt_for_target)
+          << "-fmemlock-map" << TargetOpts.Triple;
+    if (IK.getLanguage() != Language::C &&
+        IK.getLanguage() != Language::LLVM_IR)
+      Diags.Report(diag::err_drv_argument_not_allowed_with)
+          << "-fmemlock-map" << GetInputKindName(IK);
+  }
+
   if (Args.hasArg(OPT_hlsl_entrypoint) && !LangOpts.HLSL)
     Diags.Report(diag::err_drv_argument_not_allowed_with)
         << "-hlsl-entry" << GetInputKindName(IK);

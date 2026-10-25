@@ -110,6 +110,7 @@ CGOPT(DebuggerKind, DebuggerTuningOpt)
 CGOPT(VectorLibrary, VectorLibrary)
 CGOPT(bool, EnableStackSizeSection)
 CGOPT(bool, EnableAddrMap)
+CGOPT(MemLockMapMode, MemLockMap)
 CGOPT(bool, EnableAddrsig)
 CGOPT(bool, EnableCallGraphSection)
 CGOPT(bool, EmitCallSiteInfo)
@@ -487,6 +488,17 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
       cl::init(false));
   CGBINDOPT(EnableAddrMap);
 
+  static cl::opt<MemLockMapMode> MemLockMap(
+      "memlock-map",
+      cl::desc("Emit the .memlock_map section (memory accesses needing a lock)"),
+      cl::init(MemLockMapMode::None),
+      cl::values(clEnumValN(MemLockMapMode::None, "none", "Do not emit"),
+                 clEnumValN(MemLockMapMode::Lock, "lock",
+                            "List the accesses that need a lock"),
+                 clEnumValN(MemLockMapMode::All, "all",
+                            "List every access with its reason")));
+  CGBINDOPT(MemLockMap);
+
   static cl::opt<bool> EnableAddrsig(
       "addrsig", cl::desc("Emit an address-significance table"),
       cl::init(false));
@@ -637,6 +649,7 @@ codegen::InitTargetOptionsFromCodeGenFlags(const Triple &TheTriple) {
   Options.VecLib = getVectorLibrary();
   Options.EmitStackSizeSection = getEnableStackSizeSection();
   Options.EmitAddrMap = getEnableAddrMap();
+  Options.MemLockMap = getMemLockMap();
   Options.EnableMachineFunctionSplitter = getEnableMachineFunctionSplitter();
   Options.EnableStaticDataPartitioning = getEnableStaticDataPartitioning();
   Options.EmitAddrsig = getEnableAddrsig();
