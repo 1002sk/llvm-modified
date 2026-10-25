@@ -129,6 +129,8 @@ LLVM_ABI llvm::VectorLibrary getVectorLibrary();
 
 LLVM_ABI bool getEnableStackSizeSection();
 
+LLVM_ABI bool getEnableAddrMap();
+
 LLVM_ABI bool getEnableAddrsig();
 
 LLVM_ABI bool getEnableCallGraphSection();

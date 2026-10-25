@@ -999,6 +999,10 @@ void TargetPassConfig::addISelPrepare() {
   addPass(createSafeStackPass());
   addPass(createStackProtectorPass());
 
+  // Describe the pointers computed by the final IR for the addrmap.
+  if (TM->Options.EmitAddrMap)
+    addPass(createAddrMapAnnotatePass());
+
   if (PrintISelInput)
     addPass(createPrintFunctionPass(
         dbgs(), "\n\n*** Final LLVM Code input to ISel ***\n"));

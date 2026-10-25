@@ -609,10 +609,10 @@ MachineFunction::getMachineMemOperand(const MachineMemOperand *MMO,
 MachineInstr::ExtraInfo *MachineFunction::createMIExtraInfo(
     ArrayRef<MachineMemOperand *> MMOs, MCSymbol *PreInstrSymbol,
     MCSymbol *PostInstrSymbol, MDNode *HeapAllocMarker, MDNode *PCSections,
-    uint32_t CFIType, MDNode *MMRAs, Value *DS) {
-  return MachineInstr::ExtraInfo::create(Allocator, MMOs, PreInstrSymbol,
-                                         PostInstrSymbol, HeapAllocMarker,
-                                         PCSections, CFIType, MMRAs, DS);
+    uint32_t CFIType, MDNode *MMRAs, Value *DS, MDNode *AddrMap) {
+  return MachineInstr::ExtraInfo::create(
+      Allocator, MMOs, PreInstrSymbol, PostInstrSymbol, HeapAllocMarker,
+      PCSections, CFIType, MMRAs, DS, AddrMap);
 }
 
 const char *MachineFunction::createExternalSymbolName(StringRef Name) {
@@ -1036,6 +1036,11 @@ void MachineFunction::makeDebugValueSubstitution(DebugInstrOperandPair A,
 void MachineFunction::substituteDebugValuesForInst(const MachineInstr &Old,
                                                    MachineInstr &New,
                                                    unsigned MaxOperand) {
+  // The replacement computes the same value, so it inherits the description
+  // of that value for the addrmap.
+  if (MDNode *AddrMap = Old.getAddrMap(); AddrMap && !New.getAddrMap())
+    New.setAddrMap(*this, AddrMap);
+
   // If the Old instruction wasn't tracked at all, there is no work to do.
   unsigned OldInstrNum = Old.peekDebugInstrNum();
   if (!OldInstrNum)

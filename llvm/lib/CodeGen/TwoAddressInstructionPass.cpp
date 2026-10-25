@@ -790,6 +790,9 @@ bool TwoAddressInstructionImpl::convertInstTo3Addr(
   for (MachineInstr &MI : MIS)
     DistanceMap.insert(std::make_pair(&MI, Dist++));
 
+  if (MDNode *AddrMap = mi->getAddrMap(); AddrMap && &*mi != NewMI)
+    NewMI->setAddrMap(*MF, AddrMap);
+
   if (&*mi == NewMI) {
     LLVM_DEBUG(dbgs() << "2addr: CONVERTED IN-PLACE TO 3-ADDR: " << *mi);
   } else {

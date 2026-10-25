@@ -29,6 +29,7 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Analysis/VectorUtils.h"
+#include "llvm/CodeGen/AddrMapTypes.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/AssignmentTrackingAnalysis.h"
 #include "llvm/CodeGen/CodeGenCommonISel.h"
@@ -1394,6 +1395,15 @@ void SelectionDAGBuilder::visit(const Instruction &I) {
   if (!I.isTerminator() && !HasTailCall &&
       !isa<GCStatepointInst>(I)) // statepoints handle their exports internally
     CopyToExportRegsIfNeeded(&I);
+
+  // The addrmap annotation describes the value of the instruction, so it goes
+  // to the node computing that value only.
+  if (I.hasMetadataOtherThanDebugLoc())
+    if (MDNode *AddrMap = I.getMetadata(addrmap::AnnotationKindName)) {
+      auto It = NodeMap.find(&I);
+      if (It != NodeMap.end() && It->second.getNode())
+        DAG.addAddrMap(It->second.getNode(), AddrMap);
+    }
 
   // Handle metadata.
   if (PCSectionsMD || MMRA) {

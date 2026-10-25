@@ -51,6 +51,7 @@ LLVM_ABI void initializeGlobalISel(PassRegistry &);
 LLVM_ABI void initializeTarget(PassRegistry &);
 
 LLVM_ABI void initializeAAResultsWrapperPassPass(PassRegistry &);
+LLVM_ABI void initializeAddrMapAnnotateLegacyPass(PassRegistry &);
 LLVM_ABI void initializeAlwaysInlinerLegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeAssignmentTrackingAnalysisPass(PassRegistry &);
 LLVM_ABI void initializeAssumptionCacheTrackerPass(PassRegistry &);

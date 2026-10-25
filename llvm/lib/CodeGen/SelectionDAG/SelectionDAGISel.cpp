@@ -31,6 +31,7 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/UniformityAnalysis.h"
+#include "llvm/CodeGen/AddrMapTypes.h"
 #include "llvm/CodeGen/AssignmentTrackingAnalysis.h"
 #include "llvm/CodeGen/CodeGenCommonISel.h"
 #include "llvm/CodeGen/FastISel.h"
@@ -1819,10 +1820,27 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
         // instructions.
         FastIS->recomputeInsertPt();
 
+        // The addrmap annotation goes to the instruction defining the value,
+        // if selecting Inst created it.
+        MDNode *AddrMap = Inst->hasMetadataOtherThanDebugLoc()
+                              ? Inst->getMetadata(addrmap::AnnotationKindName)
+                              : nullptr;
+        MachineInstr *PrevDef = nullptr;
+        if (AddrMap)
+          if (Register Reg = FuncInfo->ValueMap.lookup(Inst))
+            PrevDef = RegInfo->getVRegDef(Reg);
+
         // Try to select the instruction with FastISel.
         if (FastIS->selectInstruction(Inst)) {
           --NumFastIselRemaining;
           ++NumFastIselSuccess;
+
+          if (AddrMap)
+            if (Register Reg = FuncInfo->ValueMap.lookup(Inst);
+                Reg && Reg.isVirtual())
+              if (MachineInstr *Def = RegInfo->getVRegDef(Reg);
+                  Def && Def != PrevDef)
+                Def->setAddrMap(*MF, AddrMap);
 
           FastIS->handleDbgInfo(Inst);
           // If fast isel succeeded, skip over all the folded instructions, and

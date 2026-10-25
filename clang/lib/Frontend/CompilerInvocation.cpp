@@ -634,6 +634,14 @@ static bool FixupInvocation(CompilerInvocation &Invocation,
     Diags.Report(diag::err_drv_argument_not_allowed_with)
         << "-fgnu89-inline" << GetInputKindName(IK);
 
+  // The addrmap only understands C (struct layouts without base classes,
+  // pointers without references, no COMDAT functions). LLVM IR is accepted so
+  // that -save-temps works for C.
+  if (CodeGenOpts.AddrMap && IK.getLanguage() != Language::C &&
+      IK.getLanguage() != Language::LLVM_IR)
+    Diags.Report(diag::err_drv_argument_not_allowed_with)
+        << "-faddrmap" << GetInputKindName(IK);
+
   if (Args.hasArg(OPT_hlsl_entrypoint) && !LangOpts.HLSL)
     Diags.Report(diag::err_drv_argument_not_allowed_with)
         << "-hlsl-entry" << GetInputKindName(IK);

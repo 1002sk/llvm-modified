@@ -9,6 +9,7 @@
 #ifndef LLVM_LIB_TARGET_X86_X86ASMPRINTER_H
 #define LLVM_LIB_TARGET_X86_X86ASMPRINTER_H
 
+#include "X86AddrMap.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/FaultMaps.h"
 #include "llvm/CodeGen/StackMaps.h"
@@ -31,6 +32,8 @@ public:
 private:
   const X86Subtarget *Subtarget = nullptr;
   FaultMaps FM;
+  X86AddrMap AddrMap;
+  bool EmitAddrMap = false;
   std::unique_ptr<MCCodeEmitter> CodeEmitter;
   bool EmitFPOData = false;
   bool ShouldEmitWeakSwiftAsyncExtendedFramePointerFlags = false;
@@ -188,6 +191,7 @@ public:
     SMShadowTracker.reset(0);
     SM.reset();
     FM.reset();
+    AddrMap.reset();
     return AsmPrinter::doInitialization(M);
   }
 

@@ -899,6 +899,9 @@ EmitSchedule(MachineBasicBlock::iterator &InsertPos) {
     if (MDNode *MD = DAG->getPCSections(Node))
       MI->setPCSections(MF, MD);
 
+    if (MDNode *MD = DAG->getAddrMap(Node))
+      MI->setAddrMap(MF, MD);
+
     // Set MMRAs on _all_ added instructions.
     if (MDNode *MMRA = DAG->getMMRAMetadata(Node)) {
       for (MachineBasicBlock::iterator It = MI->getIterator(),

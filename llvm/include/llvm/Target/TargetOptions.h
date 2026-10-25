@@ -130,7 +130,8 @@ public:
         UniqueBasicBlockSectionNames(false), SeparateNamedSections(false),
         TrapUnreachable(false), NoTrapAfterNoreturn(false), TLSSize(0),
         EmulatedTLS(false), EnableTLSDESC(false), EnableIPRA(false),
-        EmitStackSizeSection(false), EnableMachineOutliner(false),
+        EmitStackSizeSection(false), EmitAddrMap(false),
+        EnableMachineOutliner(false),
         EnableMachineFunctionSplitter(false),
         EnableStaticDataPartitioning(false), SupportsDefaultOutlining(false),
         EmitAddrsig(false), BBAddrMap(false), EmitCallGraphSection(false),
@@ -279,6 +280,10 @@ public:
 
   /// Emit section containing metadata on function stack sizes.
   unsigned EmitStackSizeSection : 1;
+
+  /// Emit the .llvm_addrmap section describing which object (and which part
+  /// of it) each pointer-producing instruction points to.
+  unsigned EmitAddrMap : 1;
 
   /// Enables the MachineOutliner pass.
   unsigned EnableMachineOutliner : 1;

@@ -298,6 +298,7 @@ class SelectionDAG {
     MDNode *HeapAllocSite = nullptr;
     MDNode *PCSections = nullptr;
     MDNode *MMRA = nullptr;
+    MDNode *AddrMap = nullptr;
     CalledGlobalInfo CalledGlobal{};
     bool NoMerge = false;
   };
@@ -2576,6 +2577,13 @@ public:
   /// Set MMRAMetadata to be associated with Node.
   void addMMRAMetadata(const SDNode *Node, MDNode *MMRA) {
     SDEI[Node].MMRA = MMRA;
+  }
+  /// Set the !addrmap annotation of the value computed by Node.
+  void addAddrMap(const SDNode *Node, MDNode *MD) { SDEI[Node].AddrMap = MD; }
+  /// Return the !addrmap annotation of Node, or nullptr if none exists.
+  MDNode *getAddrMap(const SDNode *Node) const {
+    auto It = SDEI.find(Node);
+    return It != SDEI.end() ? It->second.AddrMap : nullptr;
   }
   /// Return PCSections associated with Node, or nullptr if none exists.
   MDNode *getPCSections(const SDNode *Node) const {

@@ -2234,6 +2234,11 @@ void X86AsmPrinter::emitInstruction(const MachineInstr *MI) {
   // X86_MC::verifyInstructionPredicates(MI->getOpcode(),
   //                                     Subtarget->getFeatureBits());
 
+  // This may emit a label, so it has to come before anything else is emitted
+  // for MI, including comments.
+  if (EmitAddrMap)
+    AddrMap.handleInstruction(*MI, *this);
+
   X86MCInstLower MCInstLowering(*MF, *this);
   const X86RegisterInfo *RI =
       MF->getSubtarget<X86Subtarget>().getRegisterInfo();

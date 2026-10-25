@@ -624,6 +624,9 @@ LLVM_ABI FunctionPass *createSelectOptimizePass();
 
 LLVM_ABI FunctionPass *createCallBrPass();
 
+/// Annotates pointer arithmetic with !addrmap for the .llvm_addrmap section.
+LLVM_ABI FunctionPass *createAddrMapAnnotatePass();
+
 /// Creates Windows Secure Hot Patch pass. \see WindowsSecureHotPatching.cpp
 LLVM_ABI ModulePass *createWindowsSecureHotPatchingPass();
 

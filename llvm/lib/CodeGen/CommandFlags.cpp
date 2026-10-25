@@ -109,6 +109,7 @@ CGOPT(EABI, EABIVersion)
 CGOPT(DebuggerKind, DebuggerTuningOpt)
 CGOPT(VectorLibrary, VectorLibrary)
 CGOPT(bool, EnableStackSizeSection)
+CGOPT(bool, EnableAddrMap)
 CGOPT(bool, EnableAddrsig)
 CGOPT(bool, EnableCallGraphSection)
 CGOPT(bool, EmitCallSiteInfo)
@@ -480,6 +481,12 @@ codegen::RegisterCodeGenFlags::RegisterCodeGenFlags() {
       cl::init(false));
   CGBINDOPT(EnableStackSizeSection);
 
+  static cl::opt<bool> EnableAddrMap(
+      "addrmap",
+      cl::desc("Emit the .llvm_addrmap section (pointer to object map)"),
+      cl::init(false));
+  CGBINDOPT(EnableAddrMap);
+
   static cl::opt<bool> EnableAddrsig(
       "addrsig", cl::desc("Emit an address-significance table"),
       cl::init(false));
@@ -629,6 +636,7 @@ codegen::InitTargetOptionsFromCodeGenFlags(const Triple &TheTriple) {
   Options.ExceptionModel = getExceptionModel();
   Options.VecLib = getVectorLibrary();
   Options.EmitStackSizeSection = getEnableStackSizeSection();
+  Options.EmitAddrMap = getEnableAddrMap();
   Options.EnableMachineFunctionSplitter = getEnableMachineFunctionSplitter();
   Options.EnableStaticDataPartitioning = getEnableStaticDataPartitioning();
   Options.EmitAddrsig = getEnableAddrsig();

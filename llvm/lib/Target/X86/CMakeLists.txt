@@ -25,6 +25,7 @@ tablegen(LLVM X86GenPreLegalizeGICombiner.inc -gen-global-isel-combiner
 add_public_tablegen_target(X86CommonTableGen)
 
 set(sources
+  X86AddrMap.cpp
   X86ArgumentStackSlotRebase.cpp
   X86AsmPrinter.cpp
   X86AvoidTrailingCall.cpp
