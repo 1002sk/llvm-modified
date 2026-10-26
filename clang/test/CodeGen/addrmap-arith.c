@@ -33,7 +33,8 @@ struct Item { int id; struct Point pos; };
 struct World { long n; struct Item items[16]; };
 struct Point *item_pos(struct World *p, long i) { return &p->items[i].pos; }
 
-// -O0 computes &g.b.y step by step; each ADD derives from the previous one.
+// -O0 computes &g.b.y step by step; each ADD derives from the previous one in
+// place, so the earlier values are intermediate values of the last one.
 // O0-LABEL: f1:
 // O0:         .Laddrmap0:
 // O0-NEXT:    movabsq $g, %rax
@@ -49,12 +50,15 @@ struct Point *item_pos(struct World *p, long i) { return &p->items[i].pos; }
 
 // O0:      \"function\":\"f1\",\"kind\":\"addr\"
 // O0-SAME: \"path_str\":\"g\"
+// O0-SAME: \"provenance\":[\"machine-operand\",\"debuginfo-type\",\"intermediate\"],\"intermediate_of\":2,\"reason\":\"intermediate value of g.b.y\"}
 // O0-SAME: \"id\":1,\"function\":\"f1\",\"kind\":\"derive\",\"insn\":{\"mnemonic\":\"addq\"
 // O0-SAME: \"src_ptr\":{\"expr\":\"g\",\"var\":null,\"type\":\"struct Rect *\",\"derived_from\":[0]}
 // O0-SAME: \"path_str\":\"g.b\"
+// O0-SAME: \"intermediate_of\":2,\"reason\":\"intermediate value of g.b.y\"}
 // O0-SAME: \"id\":2,\"function\":\"f1\",\"kind\":\"derive\",\"insn\":{\"mnemonic\":\"addq\"
 // O0-SAME: \"src_ptr\":{\"expr\":\"g.b\",\"var\":null,\"type\":\"struct Point *\",\"derived_from\":[1]}
 // O0-SAME: \"path\":[{\"op\":\"field\",\"name\":\"b\",\"record\":\"struct Rect\",\"type\":\"struct Point\",\"offset_in_parent\":8,\"offset\":8,\"size\":8},{\"op\":\"field\",\"name\":\"y\",\"record\":\"struct Point\",\"type\":\"int\",\"offset_in_parent\":4,\"offset\":12,\"size\":4}],\"path_str\":\"g.b.y\"
+// O0-SAME: \"provenance\":[\"machine-operand\",\"derived-from-record\",\"debuginfo-type\"],\"reason\":null}
 // O2:      \"function\":\"f1\",\"kind\":\"addr\"
 // O2-SAME: \"path_str\":\"g.b.y\"
 
@@ -101,7 +105,15 @@ struct Point *item_pos(struct World *p, long i) { return &p->items[i].pos; }
 // O2-SAME: \"id\":8,\"function\":\"item_pos\",\"kind\":\"derive\",\"insn\":{\"mnemonic\":\"addq\"
 // O2-SAME: \"derived_from\":[7]
 // O2-SAME: \"path_str\":\"p->items[?].pos\"
-// O0-SAME: \"function\":\"item_pos\",\"kind\":\"derive\"
-// O0-NOT:  \"intermediate_of\"
+// At -O0 the steps p->items and p->items[?] are added in place.
+// O0-SAME: \"id\":7,\"function\":\"item_pos\",\"kind\":\"derive\"
+// O0-SAME: \"path_str\":\"p->items\"
+// O0-SAME: \"intermediate_of\":9,\"reason\":\"intermediate value of p->items[?].pos\"}
+// O0-SAME: \"id\":8,\"function\":\"item_pos\",\"kind\":\"derive\"
+// O0-SAME: \"path_str\":\"p->items[?]\"
+// O0-SAME: \"intermediate_of\":9,\"reason\":\"intermediate value of p->items[?].pos\"}
+// O0-SAME: \"id\":9,\"function\":\"item_pos\",\"kind\":\"derive\"
+// O0-SAME: \"path_str\":\"p->items[?].pos\"
+// O0-SAME: \"provenance\":[\"machine-operand\",\"derived-from-record\",\"ir-annotation\",\"debuginfo-type\"],\"reason\":null}
 
 // STATS: addrmap-stats: {{.*}}addrmap-arith.c: targets=9 addr=1 addr_got=0 derive=6 mask=1 not_pointer=1 unknown_base=0 annotated=6 ir_pointer_annotations={{[0-9]+}} derive_without_annotation=1 intermediate=1

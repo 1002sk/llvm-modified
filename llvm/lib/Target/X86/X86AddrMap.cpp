@@ -228,6 +228,22 @@ static bool isFrameRegister(Register Reg, const MachineFunction &MF) {
   return TRI->hasBasePointer(MF) && Reg == TRI->getBaseRegister();
 }
 
+/// Whether \p Def leaves a value in \p Reg that nothing between it and \p MI
+/// reads, so that \p MI, which overwrites \p Reg, is its only user.
+static bool isOnlyUser(const MachineInstr &Def, const MachineInstr &MI,
+                       Register Reg) {
+  const TargetRegisterInfo *TRI = MI.getMF()->getSubtarget().getRegisterInfo();
+  for (auto I = std::next(Def.getIterator()), E = MI.getIterator(); I != E;
+       ++I) {
+    if (I->isDebugInstr())
+      continue;
+    // Inline assembly is not seen by handleInstruction, so check writes too.
+    if (I->readsRegister(Reg, TRI) || I->modifiesRegister(Reg, TRI))
+      return false;
+  }
+  return true;
+}
+
 static BaseObject getGlobalBase(const GlobalValue &GV, const DataLayout &DL) {
   BaseObject B;
   B.Name = GV.getName().str();
@@ -632,6 +648,7 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
   V.RecordId = Records.size();
   if (!IsTLSPseudo && Kind != "not_pointer")
     V.Dest = Dest;
+  V.MI = &MI;
   BaseObject &Base = V.Base;
   if (Addr.Index)
     V.Vars.push_back({getRegName(Addr.Index).str(), Addr.Scale});
@@ -641,6 +658,7 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
   SmallVector<StringRef, 4> Provenance = {"machine-operand"};
   SmallVector<std::string, 1> SharedSlotVars;
   std::optional<unsigned> DerivedFrom;
+  bool ConsumesSource = false;
   std::optional<std::string> SrcExpr, SrcVar, SrcType;
   bool Ambiguous = false;
   bool Heuristic = false;
@@ -729,6 +747,7 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
     if (Src) {
       DerivedFrom = Src->RecordId;
       Provenance.push_back("derived-from-record");
+      ConsumesSource = Src->Dest == Dest && isOnlyUser(*Src->MI, MI, Dest);
     }
     if (ApplyAnnotation()) {
       // The annotation names the source pointer if it is a pointer value;
@@ -908,6 +927,7 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
     R.SrcVar = SrcVar;
     R.SrcType = SrcType;
     R.DerivedFrom = DerivedFrom;
+    R.ConsumesSource = ConsumesSource;
     R.Path = std::move(Path);
     R.PathResolved = Resolved;
     R.PathStr = V.PathStr;
@@ -918,8 +938,7 @@ X86AddrMap::recordInstruction(const MachineInstr &MI, AsmPrinter &AP) {
     R.OutOfBounds = OutOfBounds;
     R.Provenance = std::move(Provenance);
     R.Reason = Reason;
-    if (Resolved)
-      markIntermediates(R);
+    markIntermediates(R);
   }
 
   MCSymbol *Label = AP.OutContext.createTempSymbol("addrmap");
@@ -934,26 +953,40 @@ void X86AddrMap::markIntermediates(const RecordData &Final) {
   // Walk back through the unresolved derive records the final pointer was
   // computed from in this basic block, e.g. "leaq (%rdi,%rax,4), %rax" before
   // "addq $12, %rax" for &p->items[i].pos. They compute partial sums that no
-  // C expression denotes.
+  // C expression denotes. Also walk back through the pointers that were only
+  // used to compute the next one in place, e.g. "leaq -48(%rbp), %rax" before
+  // "addq $20, %rax" for &a[5]: the program never uses &a itself.
   std::optional<unsigned> Id = Final.DerivedFrom;
+  const RecordData *Cur = &Final;
   while (Id) {
     RecordData &R = Records[*Id].Data;
-    if (R.Kind != "derive" || R.PathResolved || R.IntermediateOf)
+    bool PartialSum =
+        Final.PathResolved && R.Kind == "derive" && !R.PathResolved;
+    // A consumed source may have been marked as an intermediate value of a
+    // record that has now become an intermediate value itself.
+    if (!Cur->ConsumesSource && (!PartialSum || R.IntermediateOf))
       break;
+    if (!R.IntermediateOf)
+      ++Stats.Intermediate;
     R.IntermediateOf = Final.Id;
-    R.Reason = "intermediate value of " + Final.PathStr;
-    ++Stats.Intermediate;
-    if (R.Base.Kind == "unknown" ||
-        (R.Base.Kind == "pointee" && !R.Base.HasType)) {
-      // The final pointer tells what the computation is based on.
-      R.Base = Final.Base;
-      R.SrcExpr = Final.SrcExpr;
-      R.SrcVar = Final.SrcVar;
-      R.SrcType = Final.SrcType;
-      R.ConstOffset.reset();
+    R.Reason = Final.PathStr.empty()
+                   ? "intermediate value of record " + utostr(Final.Id)
+                   : "intermediate value of " + Final.PathStr;
+    if (PartialSum) {
+      if (R.Base.Kind == "unknown" ||
+          (R.Base.Kind == "pointee" && !R.Base.HasType)) {
+        // The final pointer tells what the computation is based on.
+        R.Base = Final.Base;
+        R.SrcExpr = Final.SrcExpr;
+        R.SrcVar = Final.SrcVar;
+        R.SrcType = Final.SrcType;
+        R.ConstOffset.reset();
+      }
+      R.Confidence = "derived";
     }
-    R.Confidence = "derived";
-    R.Provenance.push_back("intermediate");
+    if (!is_contained(R.Provenance, "intermediate"))
+      R.Provenance.push_back("intermediate");
+    Cur = &R;
     Id = R.DerivedFrom;
   }
 }

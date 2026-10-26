@@ -100,6 +100,7 @@ public:
   struct PointerValue {
     /// The register holding the pointer; 0 if it is not tracked.
     unsigned Dest = 0;
+    const MachineInstr *MI = nullptr;
     unsigned RecordId;
     BaseObject Base;
     std::optional<int64_t> ConstOffset;
@@ -126,6 +127,9 @@ public:
     BaseObject Base;
     std::optional<std::string> SrcExpr, SrcVar, SrcType;
     std::optional<unsigned> DerivedFrom;
+    /// Overwrites the register holding the DerivedFrom pointer, which nothing
+    /// else read, so that pointer was only a step of this computation.
+    bool ConsumesSource = false;
     addrmap::ResolvedPath Path;
     /// The access path was resolved from the type of the base.
     bool PathResolved = false;

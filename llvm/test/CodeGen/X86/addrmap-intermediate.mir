@@ -1,0 +1,59 @@
+# RUN: llc -mtriple=x86_64-unknown-linux-gnu -start-after=livedebugvalues \
+# RUN:   -addrmap -o - %s | FileCheck %s
+
+# A pointer whose register is overwritten in place by the next step of the
+# computation, with nothing reading it in between, is only an intermediate
+# value of the final pointer. A pointer that is read in between is not.
+
+--- |
+  @g = global [4 x i32] zeroinitializer
+
+  define ptr @consumed() { ret ptr null }
+  define ptr @used() { ret ptr null }
+  define ptr @copied() { ret ptr null }
+...
+---
+name: consumed
+tracksRegLiveness: true
+body: |
+  bb.0:
+    $rax = LEA64r $rip, 1, $noreg, @g, $noreg
+    $rax = ADD64ri32 $rax, 8, implicit-def $eflags
+    $rax = ADD64ri32 $rax, 4, implicit-def $eflags
+    RET64 implicit $rax
+...
+---
+name: used
+tracksRegLiveness: true
+body: |
+  bb.0:
+    $rax = LEA64r $rip, 1, $noreg, @g, $noreg
+    $rdi = MOV64rr $rax
+    $rax = ADD64ri32 $rax, 8, implicit-def $eflags
+    RET64 implicit $rax, implicit $rdi
+...
+---
+name: copied
+tracksRegLiveness: true
+body: |
+  bb.0:
+    $rax = LEA64r $rip, 1, $noreg, @g, $noreg
+    $rcx = LEA64r $rax, 1, $noreg, 8, $noreg
+    RET64 implicit $rax, implicit $rcx
+...
+
+# Without debug info there is no access path, so the reason names the record.
+# CHECK: .section .llvm_addrmap,"",@progbits
+# CHECK:      \"id\":0,\"function\":\"consumed\",\"kind\":\"addr\"
+# CHECK-SAME: \"provenance\":[\"machine-operand\",\"intermediate\"],\"intermediate_of\":2,\"reason\":\"intermediate value of record 2\"}
+# CHECK-SAME: \"id\":1,\"function\":\"consumed\",\"kind\":\"derive\"
+# CHECK-SAME: \"provenance\":[\"machine-operand\",\"derived-from-record\",\"intermediate\"],\"intermediate_of\":2,\"reason\":\"intermediate value of record 2\"}
+# CHECK-SAME: \"id\":2,\"function\":\"consumed\",\"kind\":\"derive\"
+# CHECK-SAME: \"provenance\":[\"machine-operand\",\"derived-from-record\"],\"reason\":null}
+# CHECK-SAME: \"id\":3,\"function\":\"used\",\"kind\":\"addr\"
+# CHECK-SAME: \"provenance\":[\"machine-operand\"],\"reason\":null}
+# CHECK-SAME: \"id\":4,\"function\":\"used\",\"kind\":\"derive\"
+# CHECK-SAME: \"id\":5,\"function\":\"copied\",\"kind\":\"addr\"
+# CHECK-SAME: \"provenance\":[\"machine-operand\"],\"reason\":null}
+# CHECK-SAME: \"id\":6,\"function\":\"copied\",\"kind\":\"derive\"
+# CHECK-NOT:  \"intermediate_of\"

@@ -168,6 +168,13 @@ LEA の分類（上から順に判定）:
 - **中間値**: パスを解決できたレコードが、同じブロック内の「パスを解決できなかった `derive`」から
   導出されていた場合、その導出元をたどれるだけたどり、それぞれに `intermediate_of` と理由を付ける。
   導出元のベースが不明なら最終値のベースで補う（その場合 `ptr_offset.const` は null）。
+  また、`derive` / `mask` が元のポインタのレジスタをそのまま上書きし（`addq $20, %rax` など）、
+  元のポインタを作った命令との間でそのレジスタを読み書きする命令がない場合、元のポインタは
+  この計算の途中経過でしかないので、パスを解決できていても `intermediate_of` を付ける
+  （`-O0` の `leaq -48(%rbp), %rax` → `addq $20, %rax` で、`&a[5]` に対する `a`）。
+  連鎖していれば最後の値までたどり直す。パスがない最終値に対しては、理由を「intermediate value of record N」にする。
+  間の命令は MBB を直接走査して調べるので、`handleInstruction` を通らないインラインアセンブリも見える。
+  `read_addrmap.py` は `intermediate_of` 付きのレコードを既定で表示せず、`--all` で表示する。
   そのため、レコードは構造体で持っておき、セクションを出すときにまとめて JSON にする。
 
 ### 5.3 パス解決（AddrMapTypes）
@@ -266,6 +273,7 @@ LEA の分類（上から順に判定）:
 | D11 | ループで動くポインタは、要素サイズ刻みの可変添字として扱う | 仕様書 8 章の LSR の期待値（`a[?]`）に合わせるため | オフセット不明としてパスを出さない |
 | D12 | `confidence` の使い分けを決めた。`exact` は IR 注釈で整数演算と確定した `not_pointer` に限る。機械語オペランド・DI 情報・IR 注釈から決まったものは `derived` | 仕様書に定義がないため。フロントエンド注釈を実装したら、それ由来のものを `exact` にする予定 | IR 注釈由来もすべて `exact` にする |
 | D14 | `-faddrmap` は C だけで受け付け、C++、Objective-C などでは cc1 でエラーにする（`invalid argument '-faddrmap' not allowed with 'C++'`）。LLVM IR の入力は通す | 仕様書の対象は C だけ。C++ で試したところ、次の不具合があった。<br>・inline 関数などの COMDAT を含むオブジェクトを gold でリンクすると、捨てられたセクションへの参照でエラーになる<br>・基底クラスの部分オブジェクト（`DW_TAG_inheritance`）を扱わず、基底クラスのメンバへのパスが誤る<br>・参照型をポインタとして扱わない<br>IR を通すのは `-save-temps`（C → IR → オブジェクト）を動かすため | C++ に対応する。COMDAT は関数ごとのユニット（`SHF_LINK_ORDER` か COMDAT グループ）にし、継承と参照型を型の解釈に加える |
+| D15 | 元のポインタのレジスタをその場で上書きし、間で使われていないポインタも中間値とする（仕様書 R-COV-1 を守るためレコードは消さず、`intermediate_of` を付ける） | `-O0` の段階的な ADD で、最終値を作るためだけの途中の値（`a`、`s.b` など）が独立したポインタのように見えるため | レコードを出さない（R-COV-1 違反）／ 別のレジスタへの派生も生存解析して含める（AsmPrinter では kill フラグが当てにならない） |
 | D13 | TLS の initial exec（`movq x@GOTTPOFF(%rip)`）は `addr_got` にしている | GOT を読む命令の形として統一したため | GOT から読むのは TLS オフセットなので、`addr`（`tls`）と後続の `addq %fs:0` などを組み合わせて扱う |
 
 ## 7. 検証
@@ -280,6 +288,7 @@ LEA の分類（上から順に判定）:
 | `clang/test/CodeGen/addrmap-section.c` | Clang からの出力、`-emit-llvm` では出さないこと |
 | `clang/test/CodeGen/addrmap-path.c` | パス解決（入れ子、多次元、範囲外、無名メンバ、共用体、フィールドの途中、スタック変数、引数、`derived_from`） |
 | `clang/test/CodeGen/addrmap-arith.c` | `-O0` の ADD の連鎖、`p->next->val`、ループ、マスク、`(*q)[2]`、`char *` の演算、中間値、`-addrmap-stats` |
+| `llvm/test/CodeGen/X86/addrmap-intermediate.mir` | その場で上書きされたポインタの中間値判定と、間で読まれた・別レジスタへ派生したポインタを中間値にしないこと |
 | `clang/test/Driver/faddrmap.c` | ドライバから cc1 への伝搬 |
 
 ### 7.2 回帰テスト

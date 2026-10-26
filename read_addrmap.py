@@ -42,7 +42,12 @@ def read(path):
             off += usz
 
 if __name__ == "__main__":
-    for pc, where, src, r in read(sys.argv[1]):
+    # --all: 別のポインタを作る途中で生成された値（intermediate_of 付き）も表示する
+    show_all = "--all" in sys.argv[1:]
+    path = [a for a in sys.argv[1:] if a != "--all"][0]
+    for pc, where, src, r in read(path):
+        if "intermediate_of" in r and not show_all:
+            continue
         if r["kind"] == "not_pointer":   # 仕様 4.2: not_pointer は insn と source のみ
             print(f'{pc:#010x}  {where:<14} {r["kind"]:<11} {r["insn"]["mnemonic"]}')
             continue
